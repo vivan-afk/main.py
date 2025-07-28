@@ -7,6 +7,10 @@ import httpx
 from pyrogram import Client, filters, enums
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from PIL import Image
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(
@@ -15,12 +19,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Replace these with environment variables in production
-API_ID = 12380656  # Your api_id (integer)
-API_HASH = "d927c13beaaf5110f25c505b7c071273"  # Your api_hash (string)
-BOT_TOKEN = "8380016831:AAFpRCUXqKE1EMXtETW03ec6NmUHm4xAgBU"  # Bot token
-API_URL = "https://tgmusic.fallenapi.fun"  # YT API URL
-API_KEY = "a054ac_9-knP8fv5euZAT9sfA5uCVYVABKU1kUp"  # YT API key
+# Environment variables
+API_ID = int(os.getenv("API_ID", "12380656"))
+API_HASH = os.getenv("API_HASH", "d927c13beaaf5110f25c505b7c071273")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8380016831:AAFpRCUXqKE1EMXtETW03ec6NmUHm4xAgBU")
+API_URL = os.getenv("API_URL", "https://tgmusic.fallenapi.fun")
+API_KEY = os.getenv("API_KEY", "a054ac_9-knP8fv5euZAT9sfA5uCVYVABKU1kUp")
 
 # Initialize Pyrogram client
 app = Client(
@@ -70,7 +74,7 @@ async def download_media(url, media_type):
         ] if media_type == 'audio' else [],
         'quiet': True,
         'no_warnings': True,
-        'ffmpeg_location': '/usr/bin/ffmpeg'  # Adjust if needed
+        'ffmpeg_location': '/usr/bin/ffmpeg'
     }
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -84,6 +88,16 @@ async def download_media(url, media_type):
         logger.error(f"Media download failed for {url} ({media_type}): {str(e)}")
         return None
 
+async def fallback_search(query):
+    """Fallback search using yt_dlp if API fails."""
+    try:
+        with yt_dlp.YoutubeDL({'quiet': True}) as ydl:
+            result = ydl.extract_info(f"ytsearch:{query}", download=False)
+            return [{'url': entry['webpage_url'], 'title': entry['title']} for entry in result.get('entries', [])]
+    except Exception as e:
+        logger.error(f"Fallback search failed for query '{query}': {str(e)}")
+        return []
+
 async def search_song(query):
     """Search for a song using the API."""
     try:
@@ -93,21 +107,30 @@ async def search_song(query):
                 params={"q": query, "api_key": API_KEY}
             )
             logger.info(f"API Response Status: {response.status_code}")
-            logger.info(f"API Response Content: {response.text[:500]}")  # Truncate for brevity
+            logger.info(f"API Response Content: {response.text[:500]}")
+            
+            if response.status_code == 429:
+                logger.error("Rate limit exceeded. Retrying after delay...")
+                await asyncio.sleep(5)
+                return await search_song(query)
             
             if response.status_code != 200:
                 logger.error(f"API Error: Status code {response.status_code}")
-                return []
+                return await fallback_search(query)
+            
+            if "application/json" not in response.headers.get("content-type", ""):
+                logger.error(f"Unexpected response type: {response.headers.get('content-type')} - Falling back to yt_dlp")
+                return await fallback_search(query)
             
             try:
                 data = response.json()
                 return data.get('results', [])
             except ValueError as e:
-                logger.error(f"JSON Decode Error: {str(e)} - Response content: {response.text[:500]}")
-                return []
+                logger.error(f"JSON Decode Error for query '{query}': {str(e)} - Response content: {response.text[:500]}")
+                return await fallback_search(query)
     except httpx.HTTPError as e:
-        logger.error(f"HTTP Error during search: {str(e)}")
-        return []
+        logger.error(f"HTTP Error during search for query '{query}': {str(e)}")
+        return await fallback_search(query)
 
 @app.on_message(filters.command("song") & filters.private)
 async def song_command(client, message):
@@ -153,7 +176,7 @@ async def song_command(client, message):
                 parse_mode=enums.ParseMode.MARKDOWN
             )
     except Exception as e:
-        logger.error(f"Error sending reply: {str(e)}")
+        logger.error(f"Error sending reply for '{title}': {str(e)}")
         await message.reply("Error processing the request.", parse_mode=enums.ParseMode.MARKDOWN)
 
 @app.on_callback_query()
@@ -181,22 +204,25 @@ async def handle_callback(client, callback_query):
             )
             return
 
-        with open(filename, 'rb') as file:
-            if media_type == 'audio':
-                await callback_query.message.reply_audio(
-                    audio=file,
-                    caption=filename,
-                    parse_mode=enums.ParseMode.MARKDOWN
-                )
-            else:
-                await callback_query.message.reply_video(
-                    video=file,
-                    caption=filename,
-                    parse_mode=enums.ParseMode.MARKDOWN
-                )
-        os.remove(filename)
+        try:
+            with open(filename, 'rb') as file:
+                if media_type == 'audio':
+                    await callback_query.message.reply_audio(
+                        audio=file,
+                        caption=filename,
+                        parse_mode=enums.ParseMode.MARKDOWN
+                    )
+                else:
+                    await callback_query.message.reply_video(
+                        video=file,
+                        caption=filename,
+                        parse_mode=enums.ParseMode.MARKDOWN
+                    )
+        finally:
+            if os.path.exists(filename):
+                os.remove(filename)
     except Exception as e:
-        logger.error(f"Error processing callback ({media_type}): {str(e)}")
+        logger.error(f"Error processing callback ({media_type}) for {url}: {str(e)}")
         await callback_query.message.edit_text(
             f"Error downloading {media_type}: {str(e)}",
             parse_mode=enums.ParseMode.MARKDOWN
