@@ -3,7 +3,7 @@ import os
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import logging
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 
 # Basic logging setup
 logging.basicConfig(level=logging.INFO)
@@ -28,7 +28,14 @@ async def fetch_download_url(query: str, is_audio: bool) -> dict:
                 params={"query": query, "type": "audio" if is_audio else "video"}
             )
             response.raise_for_status()
+            content_type = response.headers.get("content-type", "")
+            if "application/json" not in content_type:
+                logger.error(f"Unexpected content type: {content_type}, response: {response.text}")
+                return {"error": "Invalid response format"}
             return response.json()
+        except httpx.HTTPStatusError as e:
+            logger.error(f"HTTP error: {e}, status: {e.response.status_code}, response: {e.response.text}")
+            return {"error": f"HTTP error: {e}"}
         except Exception as e:
             logger.error(f"API error: {e}")
             return {"error": str(e)}
