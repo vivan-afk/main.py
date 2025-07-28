@@ -10,7 +10,6 @@ from typing import Optional, Union
 from dataclasses import dataclass
 from pyrogram import Client, filters
 from pyrogram.types import Message
-from youtubesearchpython.__future__ import VideosSearch
 import logging
 
 # Configuration
@@ -97,32 +96,34 @@ class YouTubeAPI:
         if "&" in link:
             link = link.split("&")[0]
         try:
-            results = VideosSearch(link, limit=1)
-            result = (await results.next())["result"][0]
-            title = result.get("title", "Unknown Title")
-            duration = result.get("duration", "None")
-            thumbnail = result.get("thumbnails", [{}])[0].get("url", "").split("?")[0]
-            vidid = result.get("id", "")
-            duration_sec = 0 if duration == "None" else self._time_to_seconds(duration)
-            return title, duration, duration_sec, thumbnail, vidid
+            ydl_opts = {
+                "quiet": True,
+                "no_warnings": True,
+                "geo_bypass": True,
+                "nocheckcertificate": True,
+            }
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(link, download=False)
+                title = info.get("title", "Unknown Title")
+                duration_sec = info.get("duration", 0)
+                duration = self._seconds_to_time(duration_sec) if duration_sec else "None"
+                thumbnail = info.get("thumbnail", "").split("?")[0] if info.get("thumbnail") else None
+                vidid = info.get("id", "")
+                return title, duration, duration_sec, thumbnail, vidid
         except Exception as e:
             logger.error(f"Error fetching details for {link}: {e}")
             return None, None, None, None, None
 
-    def _time_to_seconds(self, duration: str) -> int:
-        """Convert duration string (e.g., '4:30' or '1:23:45') to seconds."""
-        try:
-            parts = duration.split(":")
-            parts = [int(p) for p in parts]
-            if len(parts) == 3:
-                return parts[0] * 3600 + parts[1] * 60 + parts[2]
-            elif len(parts) == 2:
-                return parts[0] * 60 + parts[1]
-            elif len(parts) == 1:
-                return parts[0]
-            return 0
-        except Exception:
-            return 0
+    def _seconds_to_time(self, seconds: int) -> str:
+        """Convert seconds to a duration string (e.g., '4:30' or '1:23:45')."""
+        if not seconds:
+            return "None"
+        hours = seconds // 3600
+        minutes = (seconds % 3600) // 60
+        secs = seconds % 60
+        if hours:
+            return f"{hours}:{minutes:02d}:{secs:02d}"
+        return f"{minutes}:{secs:02d}"
 
     async def download(self, link: str, video: bool = False, format_id: Optional[str] = None, title: Optional[str] = None) -> tuple[str, bool]:
         if "&" in link:
@@ -157,7 +158,6 @@ class YouTubeAPI:
                 logger.error(f"Error downloading {'video' if is_video else 'audio'} for {link}: {e}")
                 return None
 
-        # Assume direct download is always enabled for simplicity
         if dl := await self.download_with_api(link.split("=")[-1], video):
             return str(dl), True
         file_path = await loop.run_in_executor(None, lambda: ytdlp_download(video))
