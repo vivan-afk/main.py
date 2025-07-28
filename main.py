@@ -3,6 +3,7 @@ import os
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import logging
+import asyncio
 from urllib.parse import urlparse, parse_qs
 
 # Basic logging setup
@@ -19,26 +20,35 @@ API_KEY = "a054ac_9-knP8fv5euZAT9sfA5uCVYVABKU1kUp"
 # Initialize Pyrogram client
 app = Client("my_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-async def fetch_download_url(query: str, is_audio: bool) -> dict:
+async def fetch_download_url(query: str, is_audio: bool, retries: int = 3) -> dict:
     async with httpx.AsyncClient(timeout=30.0) as client:
-        try:
-            response = await client.get(
-                API_URL,
-                headers={"Authorization": f"Bearer {API_KEY}"},
-                params={"query": query, "type": "audio" if is_audio else "video"}
-            )
-            response.raise_for_status()
-            content_type = response.headers.get("content-type", "")
-            if "application/json" not in content_type:
-                logger.error(f"Unexpected content type: {content_type}, response: {response.text}")
-                return {"error": "Invalid response format"}
-            return response.json()
-        except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP error: {e}, status: {e.response.status_code}, response: {e.response.text}")
-            return {"error": f"HTTP error: {e}"}
-        except Exception as e:
-            logger.error(f"API error: {e}")
-            return {"error": str(e)}
+        for attempt in range(retries):
+            try:
+                response = await client.get(
+                    API_URL,
+                    headers={"Authorization": f"Bearer {API_KEY}"},
+                    params={"query": query, "type": "audio" if is_audio else "video"}
+                )
+                response.raise_for_status()
+                content_type = response.headers.get("content-type", "").lower()
+                if "application/json" not in content_type:
+                    logger.error(f"Unexpected content type: {content_type}, response: {response.text[:500]}")
+                    return {"error": f"Invalid response format: {content_type}, body: {response.text[:500]}"}
+                try:
+                    return response.json()
+                except ValueError as e:
+                    logger.error(f"JSON decode error: {e}, response: {response.text[:500]}")
+                    return {"error": "Failed to parse JSON response"}
+            except httpx.HTTPStatusError as e:
+                logger.error(f"HTTP error: {e}, status: {e.response.status_code}, response: {e.response.text[:500]}")
+                if attempt == retries - 1:
+                    return {"error": f"HTTP error: {e}, status: {e.response.status_code}"}
+            except Exception as e:
+                logger.error(f"API error: {e}")
+                if attempt == retries - 1:
+                    return {"error": str(e)}
+            await asyncio.sleep(2 ** attempt)  # Exponential backoff
+        return {"error": "Max retries exceeded"}
 
 async def download_file(url: str, filename: str) -> bool:
     async with httpx.AsyncClient(timeout=60.0) as client:
