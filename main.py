@@ -51,8 +51,8 @@ def search_song(query: str) -> dict:
     """Search for a song using the music API and parse HTML response."""
     try:
         # Encode the query and construct the search URL
-        
-        url = f"{MUSIC_API_URL}"
+        encoded_query = quote(query)
+        url = f"{MUSIC_API_URL}/search?query={encoded_query}"
         logger.info(f"Searching API with URL: {url}")
         
         # Make the API request
@@ -66,20 +66,29 @@ def search_song(query: str) -> dict:
         # Parse HTML response
         soup = BeautifulSoup(response.text, "html.parser")
         
-        # Assume song data is in a div with class 'song' (adjust based on actual HTML)
-        song_elements = soup.find_all("div", class_="song")
+        # Try to find song data (adjust based on actual HTML structure)
+        # Option 1: Look for a list or table with song links
+        song_elements = soup.find_all("a", href=lambda href: href and ".mp3" in href.lower())
         if not song_elements:
-            logger.warning("No song elements found in HTML")
-            return None
+            # Option 2: Try finding elements with a specific class (e.g., 'song' or 'track')
+            song_elements = soup.find_all("div", class_=["song", "track", "result"])
+            if not song_elements:
+                logger.warning("No song elements or MP3 links found in HTML")
+                return None
         
         # Extract details from the first song
         song = song_elements[0]
-        title = song.find("h3").text.strip() if song.find("h3") else "Unknown Title"
-        download_url = song.find("a", href=True)["href"] if song.find("a", href=True) else None
+        download_url = song["href"] if song.name == "a" else song.find("a", href=True)["href"] if song.find("a", href=True) else None
+        title_element = song.find(["h3", "h2", "span", "div"], class_=["title", "song-title", "name"]) or soup.find("title")
+        title = title_element.text.strip() if title_element else query  # Fallback to query if no title
         
         if not download_url:
             logger.warning("No download URL found in song element")
             return None
+        
+        # Ensure download URL is absolute
+        if download_url.startswith("/"):
+            download_url = f"{MUSIC_API_URL}{download_url}"
         
         # Return song data as a dictionary
         return {"title": title, "download_url": download_url}
@@ -119,7 +128,9 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     # Search for the song
     song_data = search_song(query)
     if not song_data:
-        await update.message.reply_text("Sorry, no results found or an error occurred.")
+        await update.message.reply_text(
+            "Sorry, no results found or an error occurred. Try a different song or check the API."
+        )
         return
 
     # Extract song details
