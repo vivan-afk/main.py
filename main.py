@@ -9,6 +9,7 @@ from telegram.ext import (
 )
 from urllib.parse import quote
 import tempfile
+from bs4 import BeautifulSoup
 
 # Enable logging
 logging.basicConfig(
@@ -47,21 +48,46 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     )
 
 def search_song(query: str) -> dict:
-    """Search for a song using the music API."""
+    """Search for a song using the music API and parse HTML response."""
     try:
-        # Assume the API has a /search endpoint with query parameter
-        url = f"{MUSIC_API_URL}"
+        # Encode the query and construct the search URL
+        encoded_query = quote(query)
+        url = f"{MUSIC_API_URL}/search?query={encoded_query}"
+        logger.info(f"Searching API with URL: {url}")
+        
+        # Make the API request
         response = requests.get(url, headers=HEADERS, timeout=10)
         response.raise_for_status()
-        data = response.json()
         
-        # Assume response format: {"results": [{"title": "...", "download_url": "...", "artist": "..."}]}
-        if data.get("results") and len(data["results"]) > 0:
-            return data["results"][0]  # Return first result
-        else:
+        # Log response details for debugging
+        logger.info(f"Response status: {response.status_code}")
+        logger.info(f"Response content: {response.text[:500]}")  # Log first 500 chars
+        
+        # Parse HTML response
+        soup = BeautifulSoup(response.text, "html.parser")
+        
+        # Assume song data is in a div with class 'song' (adjust based on actual HTML)
+        song_elements = soup.find_all("div", class_="song")
+        if not song_elements:
+            logger.warning("No song elements found in HTML")
             return None
+        
+        # Extract details from the first song
+        song = song_elements[0]
+        title = song.find("h3").text.strip() if song.find("h3") else "Unknown Title"
+        download_url = song.find("a", href=True)["href"] if song.find("a", href=True) else None
+        
+        if not download_url:
+            logger.warning("No download URL found in song element")
+            return None
+        
+        # Return song data as a dictionary
+        return {"title": title, "download_url": download_url}
     except requests.RequestException as e:
         logger.error(f"Error searching song: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Error parsing HTML: {e}")
         return None
 
 def download_song(download_url: str) -> str:
@@ -96,9 +122,8 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text("Sorry, no results found or an error occurred.")
         return
 
-    # Extract song details (adjust based on actual API response)
+    # Extract song details
     title = song_data.get("title", "Unknown Title")
- #   artist = song_data.get("artist", "Unknown Artist")
     download_url = song_data.get("download_url")
     if not download_url:
         await update.message.reply_text("No download URL found for this song.")
@@ -116,7 +141,6 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await update.message.reply_audio(
                 audio=audio_file,
                 title=title,
-                # performer=artist,
                 filename=f"{title}.mp3"
             )
         await update.message.reply_text(f"Sent: {title}")
@@ -126,9 +150,10 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     finally:
         # Clean up the temporary file
         try:
-            os.unlink(file_path)
-        except OSError:
-            pass
+            if file_path:
+                os.unlink(file_path)
+        except OSError as e:
+            logger.error(f"Error deleting temporary file: {e}")
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Log errors caused by updates."""
