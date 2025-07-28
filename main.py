@@ -51,8 +51,8 @@ def search_song(query: str) -> dict:
     """Search for a song using the music API and parse HTML response."""
     try:
         # Encode the query and construct the search URL
-        encoded_query = quote(query)
-        url = f"{MUSIC_API_URL}/search?query={encoded_query}"
+        
+        url = f"{MUSIC_API_URL}"
         logger.info(f"Searching API with URL: {url}")
         
         # Make the API request
