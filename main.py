@@ -1,19 +1,8 @@
-import asyncio
-import io
-import os
-import logging
-import yt_dlp
 import httpx
-from pyrogram import Client, filters, enums
+import os
+from urllib.parse import urlparse, parse_qs
+from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from PIL import Image
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
-logger = logging.getLogger(__name__)
 
 # Replace these with environment variables in production
 API_ID = 12380656  # Your api_id (integer)
@@ -30,182 +19,113 @@ app = Client(
     bot_token=BOT_TOKEN
 )
 
-async def get_thumbnail(video_url):
-    """Download and resize video thumbnail."""
-    ydl_opts = {
-        'skip_download': True,
-        'writethumbnail': True,
-        'outtmpl': 'thumbnail%(ext)s',
-        'quiet': True,
-        'no_warnings': True
-    }
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(video_url, download=True)
-            thumbnail_path = 'thumbnail.jpg'
-            if os.path.exists(thumbnail_path):
-                img = Image.open(thumbnail_path).resize((320, 180), Image.LANCZOS)
-                thumb_io = io.BytesIO()
-                img.save(thumb_io, format='JPEG', quality=85)
-                thumb_io.seek(0)
-                os.remove(thumbnail_path)
-                return thumb_io, info['title']
-            return None, info['title']
-    except Exception as e:
-        logger.error(f"Thumbnail extraction failed for {video_url}: {str(e)}")
-        return None, info['title'] if 'info' in locals() else "Unknown Title"
+async def fetch_download_url(query: str, is_audio: bool = False) -> dict:
+    headers = {"Authorization": f"Bearer {API_KEY}"}
+    params = {"query": query, "type": "audio" if is_audio else "video"}
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(f"{API_URL}/download", headers=headers, params=params)
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            print(f"API request failed: {e}")
+            return {}
+        except Exception as e:
+            print(f"Error fetching download URL: {e}")
+            return {}
 
-async def download_media(url, media_type):
-    """Download audio or video from YouTube."""
-    ydl_opts = {
-        'format': 'bestaudio' if media_type == 'audio' else 'bestvideo[vcodec^=avc][height<=720]+bestaudio/best',
-        'outtmpl': '%(title)s.%(ext)s',
-        'merge_output_format': 'mp4' if media_type == 'video' else None,
-        'postprocessors': [
-            {
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
-                'preferredquality': '192'
-            }
-        ] if media_type == 'audio' else [],
-        'quiet': True,
-        'no_warnings': True,
-        'ffmpeg_location': '/usr/bin/ffmpeg'  # Adjust if needed
-    }
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            ext = 'mp3' if media_type == 'audio' else 'mp4'
-            filename = f"{info['title']}.{ext}"
-            if os.path.exists(filename):
-                return filename
-            return None
-    except Exception as e:
-        logger.error(f"Media download failed for {url} ({media_type}): {str(e)}")
-        return None
+async def download_file(url: str, filename: str) -> bool:
+    async with httpx.AsyncClient() as client:
+        try:
+            async with client.stream("GET", url) as response:
+                response.raise_for_status()
+                with open(filename, "wb") as f:
+                    async for chunk in response.aiter_bytes():
+                        f.write(chunk)
+            return True
+        except Exception as e:
+            print(f"Download failed: {e}")
+            return False
 
-async def search_song(query):
-    """Search for a song using the API."""
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(
-                API_URL,
-                params={"q": query, "api_key": API_KEY}
-            )
-            logger.info(f"API Response Status: {response.status_code}")
-            logger.info(f"API Response Content: {response.text[:500]}")  # Truncate for brevity
-            
-            if response.status_code != 200:
-                logger.error(f"API Error: Status code {response.status_code}")
-                return []
-            
-            try:
-                data = response.json()
-                return data.get('results', [])
-            except ValueError as e:
-                logger.error(f"JSON Decode Error: {str(e)} - Response content: {response.text[:500]}")
-                return []
-    except httpx.HTTPError as e:
-        logger.error(f"HTTP Error during search: {str(e)}")
-        return []
+def parse_youtube_url(url: str) -> str:
+    parsed = urlparse(url)
+    if parsed.hostname in ["www.youtube.com", "youtube.com"]:
+        query_params = parse_qs(parsed.query)
+        return query_params.get("v", [None])[0] or parsed.path.split("/")[-1]
+    elif parsed.hostname == "youtu.be":
+        return parsed.path.lstrip("/")
+    return url
 
-@app.on_message(filters.command("song") & filters.private)
-async def song_command(client, message):
-    """Handle /song command to search or process YouTube URL."""
-    query = message.text.split(maxsplit=1)[1] if len(message.text.split()) > 1 else None
+async def process_query(query: str, is_audio: bool = False) -> tuple:
+    output_dir = "downloads"
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+    
+    if "youtube.com" in query or "youtu.be" in query:
+        query = parse_youtube_url(query)
+    
+    data = await fetch_download_url(query, is_audio)
+    if not data or "url" not in data:
+        return None, "No download URL found."
+    
+    download_url = data["url"]
+    title = data.get("title", "downloaded_file")
+    ext = "mp3" if is_audio else "mp4"
+    filename = os.path.join(output_dir, f"{title}.{ext}".replace("/", "_").replace("\\", "_"))
+    
+    success = await download_file(download_url, filename)
+    if success:
+        return filename, None
+    return None, "Failed to download the file."
+
+@app.on_message(filters.command(["start"]))
+async def start_command(client, message):
+    await message.reply_text(
+        "Welcome to the YouTube Downloader Bot! Send a YouTube URL or search query to download a video or audio."
+    )
+
+@app.on_message(filters.text & ~filters.command(["start"]))
+async def handle_text(client, message):
+    query = message.text.strip()
     if not query:
-        await message.reply("Please provide a song name or YouTube URL.", parse_mode=enums.ParseMode.MARKDOWN)
+        await message.reply_text("Please provide a valid YouTube URL or search query.")
         return
-
-    is_url = query.startswith(('https://www.youtube.com', 'https://youtu.be'))
-    if is_url:
-        video_url = query
-    else:
-        results = await search_song(query)
-        if not results:
-            await message.reply("No results found.", parse_mode=enums.ParseMode.MARKDOWN)
-            return
-        video_url = results[0].get('url')
-        if not video_url:
-            await message.reply("No valid URL found in search results.", parse_mode=enums.ParseMode.MARKDOWN)
-            return
-
-    thumbnail, title = await get_thumbnail(video_url)
-    buttons = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("Audio", callback_data=f"audio_{video_url}"),
-            InlineKeyboardButton("Video", callback_data=f"video_{video_url}")
-        ],
-        [InlineKeyboardButton("Close", callback_data="close")]
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("Download Video", callback_data=f"video_{query}")],
+        [InlineKeyboardButton("Download Audio", callback_data=f"audio_{query}")]
     ])
-    try:
-        if thumbnail:
-            await message.reply_photo(
-                photo=thumbnail,
-                caption=f"**{title}**\nChoose download format:",
-                reply_markup=buttons,
-                parse_mode=enums.ParseMode.MARKDOWN
-            )
-        else:
-            await message.reply(
-                text=f"**{title}**\nChoose download format:",
-                reply_markup=buttons,
-                parse_mode=enums.ParseMode.MARKDOWN
-            )
-    except Exception as e:
-        logger.error(f"Error sending reply: {str(e)}")
-        await message.reply("Error processing the request.", parse_mode=enums.ParseMode.MARKDOWN)
+    await message.reply_text("Choose download format:", reply_markup=keyboard)
 
 @app.on_callback_query()
 async def handle_callback(client, callback_query):
-    """Handle button callbacks for audio/video download or close."""
     data = callback_query.data
-    if data == "close":
-        try:
-            await callback_query.message.delete()
-        except Exception as e:
-            logger.error(f"Error deleting message: {str(e)}")
+    is_audio = data.startswith("audio_")
+    query = data.replace("audio_", "").replace("video_", "")
+    
+    await callback_query.message.edit_text("Processing your request...")
+    
+    filename, error = await process_query(query, is_audio)
+    if error:
+        await callback_query.message.edit_text(error)
         return
-
-    media_type, url = data.split('_', 1)
-    try:
-        await callback_query.message.edit_text(
-            f"Downloading {media_type}...",
-            parse_mode=enums.ParseMode.MARKDOWN
-        )
-        filename = await download_media(url, media_type)
-        if not filename:
-            await callback_query.message.edit_text(
-                f"Failed to download {media_type}.",
-                parse_mode=enums.ParseMode.MARKDOWN
-            )
-            return
-
-        with open(filename, 'rb') as file:
-            if media_type == 'audio':
-                await callback_query.message.reply_audio(
-                    audio=file,
-                    caption=filename,
-                    parse_mode=enums.ParseMode.MARKDOWN
-                )
-            else:
-                await callback_query.message.reply_video(
-                    video=file,
-                    caption=filename,
-                    parse_mode=enums.ParseMode.MARKDOWN
-                )
+    
+    file_size = os.path.getsize(filename) / (1024 * 1024)  # Size in MB
+    if file_size > 50:  # Telegram's file size limit for bots
+        await callback_query.message.edit_text("File is too large to send via Telegram (>50MB).")
         os.remove(filename)
-    except Exception as e:
-        logger.error(f"Error processing callback ({media_type}): {str(e)}")
-        await callback_query.message.edit_text(
-            f"Error downloading {media_type}: {str(e)}",
-            parse_mode=enums.ParseMode.MARKDOWN
-        )
-    finally:
-        try:
-            await callback_query.message.delete()
-        except Exception as e:
-            logger.error(f"Error deleting message after download: {str(e)}")
+        return
+    
+    with open(filename, "rb") as f:
+        if is_audio:
+            await callback_query.message.reply_audio(audio=f, caption="Downloaded audio")
+        else:
+            await callback_query.message.reply_video(video=f, caption="Downloaded video")
+    
+    await callback_query.message.delete()
+    os.remove(filename)
 
 if __name__ == "__main__":
+    print("Starting YouTube Downloader Bot...")
     app.run()
