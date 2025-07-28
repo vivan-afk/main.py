@@ -1,5 +1,5 @@
 import asyncio, io, os, yt_dlp, httpx
-from pyrogram import filters, enums
+from pyrogram import filters, enums, Client
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from PIL import Image
 
