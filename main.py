@@ -199,7 +199,6 @@ async def handle_callback(client, callback_query):
 async def main():
     logger.info("Starting YouTube Downloader Bot...")
     await app.start()
-    await asyncio.Event().wait()  # Keep bot running
-
+    
 if __name__ == "__main__":
     asyncio.run(main())
