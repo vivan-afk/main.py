@@ -6,7 +6,7 @@ import logging
 import asyncio
 from urllib.parse import urlparse, parse_qs
 
-# Basic logging setup
+# Logging setup
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 API_ID = 12380656
 API_HASH = "d927c13beaaf5110f25c505b7c071273"
 BOT_TOKEN = "8380016831:AAFpRCUXqKE1EMXtETW03ec6NmUHm4xAgBU"
-API_URL = "https://tgmusic.fallenapi.fun"
+API_URL = "https://tgmusic.fallenapi.fun"  # Verify this is the correct endpoint
 API_KEY = "a054ac_9-knP8fv5euZAT9sfA5uCVYVABKU1kUp"
 
 # Initialize Pyrogram client
@@ -31,22 +31,38 @@ async def fetch_download_url(query: str, is_audio: bool, retries: int = 3) -> di
                 )
                 response.raise_for_status()
                 content_type = response.headers.get("content-type", "").lower()
+                
+                # Log detailed response info for debugging
                 if "application/json" not in content_type:
-                    logger.error(f"Unexpected content type: {content_type}, response: {response.text[:500]}")
-                    return {"error": f"Invalid response format: {content_type}, body: {response.text[:500]}"}
+                    logger.error(
+                        f"Unexpected content type: {content_type}\n"
+                        f"URL: {response.url}\n"
+                        f"Headers: {response.headers}\n"
+                        f"Body (truncated): {response.text[:1000]}"
+                    )
+                    return {"error": f"Invalid response format: {content_type}. Expected JSON, received HTML or other content."}
+                
                 try:
-                    return response.json()
+                    data = response.json()
+                    if not data.get("url"):
+                        logger.error(f"No download URL in response: {data}")
+                        return {"error": "No download URL found in API response"}
+                    return data
                 except ValueError as e:
-                    logger.error(f"JSON decode error: {e}, response: {response.text[:500]}")
-                    return {"error": "Failed to parse JSON response"}
+                    logger.error(f"JSON decode error: {e}\nResponse: {response.text[:1000]}")
+                    return {"error": f"Failed to parse JSON response: {e}"}
             except httpx.HTTPStatusError as e:
-                logger.error(f"HTTP error: {e}, status: {e.response.status_code}, response: {e.response.text[:500]}")
+                logger.error(
+                    f"HTTP error: {e}\n"
+                    f"Status: {e.response.status_code}\n"
+                    f"Response: {e.response.text[:1000]}"
+                )
                 if attempt == retries - 1:
                     return {"error": f"HTTP error: {e}, status: {e.response.status_code}"}
             except Exception as e:
                 logger.error(f"API error: {e}")
                 if attempt == retries - 1:
-                    return {"error": str(e)}
+                    return {"error": f"API request failed: {e}"}
             await asyncio.sleep(2 ** attempt)  # Exponential backoff
         return {"error": "Max retries exceeded"}
 
@@ -76,14 +92,14 @@ async def process_query(query: str, is_audio: bool) -> tuple:
     query = parse_youtube_url(query) if ("youtube.com" in query or "youtu.be" in query) else query
     
     data = await fetch_download_url(query, is_audio)
-    if "error" in data or not data.get("url"):
-        return None, data.get("error", "No download URL found")
+    if "error" in data:
+        return None, data["error"]
     
     title = "".join(c for c in data.get("title", "file") if c.isalnum() or c in " _-")[:50]
     ext = "mp3" if is_audio else "mp4"
     filename = f"downloads/{title}.{ext}"
     
-    return (filename, None) if await download_file(data["url"], filename) else (None, "Download failed")
+    return (filename, None) if await download_file(data["url"], filename) else (None, "Failed to download file")
 
 @app.on_message(filters.command(["start"]))
 async def start_command(client, message):
@@ -93,7 +109,7 @@ async def start_command(client, message):
 async def handle_text(client, message):
     query = message.text.strip()
     if not query:
-        await message.reply_text("Please provide a valid query.")
+        await message.reply_text("Please provide a valid query or YouTube URL.")
         return
     
     keyboard = InlineKeyboardMarkup([
@@ -108,16 +124,16 @@ async def handle_callback(client, callback_query):
     is_audio = data.startswith("audio_")
     query = data.replace("audio_", "").replace("video_", "")
     
-    await callback_query.message.edit_text("Processing...")
+    await callback_query.message.edit_text("Processing your request...")
     
     filename, error = await process_query(query, is_audio)
     if error:
-        await callback_query.message.edit_text(f"Error: {error}")
+        await callback_query.message.edit_text(f"Error: {error}\nPlease try again or contact support.")
         return
     
     file_size = os.path.getsize(filename) / (1024 * 1024)
     if file_size > 50:
-        await callback_query.message.edit_text("File too large (>50MB).")
+        await callback_query.message.edit_text("Error: File size exceeds 50MB limit.")
         os.remove(filename)
         return
     
@@ -127,9 +143,12 @@ async def handle_callback(client, callback_query):
                 await callback_query.message.reply_audio(audio=f, caption=os.path.basename(filename))
             else:
                 await callback_query.message.reply_video(video=f, caption=os.path.basename(filename))
+    except Exception as e:
+        await callback_query.message.edit_text(f"Error sending file: {e}")
     finally:
         await callback_query.message.delete()
-        os.remove(filename)
+        if os.path.exists(filename):
+            os.remove(filename)
 
 if __name__ == "__main__":
     app.run()
