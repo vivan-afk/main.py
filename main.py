@@ -1,80 +1,153 @@
-
-import asyncio
+import logging
 import os
-from pyrogram import Client, filters
-from pyrogram.types import Message
 import requests
+from telegram import Update
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    ContextTypes,
+)
 from urllib.parse import quote
+import tempfile
 
-# Bot configuration
-API_ID = int(os.getenv("API_ID", "12380656"))
-API_HASH = os.getenv("API_HASH", "d927c13beaaf5110f25c505b7c071273")
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8380016831:AAFpRCUXqKE1EMXtETW03ec6NmUHm4xAgBU")
-DOWNLOAD_API_URL = "https://tgmusic.fallenapi.fun"
+# Enable logging
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
-app = Client("yt_downloader_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+# Environment variables
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8380016831:AAFpRCUXqKE1EMXtETW03ec6NmUHm4xAgBU")
+MUSIC_API_KEY = os.getenv("MUSIC_API_KEY", "86278b_ssueajhR0D5XCET9n3HGIr0y57w2BZeR")
+MUSIC_API_URL = "https://tgmusic.fallenapi.fun"
 
-# Start command handler
-@app.on_message(filters.command("start"))
-async def start_command(client: Client, message: Message):
-    await message.reply_text(
-        "Welcome to the YouTube Downloader Bot! 🎥\n"
-        "Send me a YouTube video URL to download it.\n"
-        "Example: https://www.youtube.com/watch?v=video_id"
+# Headers for music API requests
+HEADERS = {
+    "Authorization": f"Bearer {MUSIC_API_KEY}",
+    "User-Agent": "TelegramMusicBot/1.0"
+}
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Send a welcome message when the /start command is issued."""
+    user = update.effective_user
+    await update.message.reply_text(
+        f"Hi {user.first_name}! I'm a music bot. Use /search <song name> to find and download a song as MP3!\n"
+        "For example: /search Shape of You\n"
+        "Use /help for more info."
     )
 
-# Handle YouTube URL messages
-@app.on_message(filters.text & filters.regex(r"(?:https?://)?(?:www\.)?(?:youtube\.com|youtu\.be)/"))
-async def handle_youtube_url(client: Client, message: Message):
-    youtube_url = message.text
-    chat_id = message.chat.id
-    
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Send a help message when the /help command is issued."""
+    await update.message.reply_text(
+        "Commands:\n"
+        "/start - Start the bot\n"
+        "/help - Show this help message\n"
+        "/search <song name> - Search and download a song as MP3\n"
+        "Note: Songs are downloaded from tgmusic.fallenapi.fun and sent as MP3 files."
+    )
+
+def search_song(query: str) -> dict:
+    """Search for a song using the music API."""
     try:
-        # Send processing message
-        processing_msg = await message.reply_text("Processing your video... Please wait.")
-
-        # Encode URL for API request
-        encoded_url = quote(youtube_url)
-        api_endpoint = f"{DOWNLOAD_API_URL}/download?url={encoded_url}"
-
-        # Make API request
-        response = requests.get(api_endpoint, stream=True)
+        # Assume the API has a /search endpoint with query parameter
+        url = f"{MUSIC_API_URL}/search?q={quote(query)}"
+        response = requests.get(url, headers=HEADERS, timeout=10)
+        response.raise_for_status()
+        data = response.json()
         
-        if response.status_code != 200:
-            await processing_msg.edit_text("Failed to fetch video. Please check the URL and try again.")
-            return
+        # Assume response format: {"results": [{"title": "...", "download_url": "...", "artist": "..."}]}
+        if data.get("results") and len(data["results"]) > 0:
+            return data["results"][0]  # Return first result
+        else:
+            return None
+    except requests.RequestException as e:
+        logger.error(f"Error searching song: {e}")
+        return None
 
-        # Save the video temporarily
-        temp_file = "temp_video.mp4"
-        with open(temp_file, "wb") as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
-                    f.write(chunk)
+def download_song(download_url: str) -> str:
+    """Download the song and return the path to the temporary file."""
+    try:
+        response = requests.get(download_url, headers=HEADERS, stream=True, timeout=10)
+        response.raise_for_status()
+        
+        # Create a temporary file to store the MP3
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
+        for chunk in response.iter_content(chunk_size=8192):
+            if chunk:
+                temp_file.write(chunk)
+        temp_file.close()
+        return temp_file.name
+    except requests.RequestException as e:
+        logger.error(f"Error downloading song: {e}")
+        return None
 
-        # Send the video to the user
-        await client.send_video(
-            chat_id=chat_id,
-            video=temp_file,
-            caption=f"Downloaded from: {youtube_url}",
-            progress=upload_progress,
-            progress_args=(processing_msg,)
-        )
+async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle the /search command to find and send a song."""
+    if not context.args:
+        await update.message.reply_text("Please provide a song name. Usage: /search <song name>")
+        return
 
-        # Clean up
-        await processing_msg.delete()
-        if os.path.exists(temp_file):
-            os.remove(temp_file)
+    query = " ".join(context.args)
+    await update.message.reply_text(f"Searching for '{query}'...")
 
+    # Search for the song
+    song_data = search_song(query)
+    if not song_data:
+        await update.message.reply_text("Sorry, no results found or an error occurred.")
+        return
+
+    # Extract song details (adjust based on actual API response)
+    title = song_data.get("title", "Unknown Title")
+ #   artist = song_data.get("artist", "Unknown Artist")
+    download_url = song_data.get("download_url")
+    if not download_url:
+        await update.message.reply_text("No download URL found for this song.")
+        return
+
+    # Download the song
+    file_path = download_song(download_url)
+    if not file_path:
+        await update.message.reply_text("Failed to download the song.")
+        return
+
+    # Send the MP3 file
+    try:
+        with open(file_path, "rb") as audio_file:
+            await update.message.reply_audio(
+                audio=audio_file,
+                title=title,
+                # performer=artist,
+                filename=f"{title}.mp3"
+            )
+        await update.message.reply_text(f"Sent: {title}")
     except Exception as e:
-        await processing_msg.edit_text(f"An error occurred: {str(e)}")
-        if os.path.exists(temp_file):
-            os.remove(temp_file)
+        logger.error(f"Error sending audio: {e}")
+        await update.message.reply_text("Failed to send the audio file.")
+    finally:
+        # Clean up the temporary file
+        try:
+            os.unlink(file_path)
+        except OSError:
+            pass
 
-# Upload progress callback
-async def upload_progress(current, total, processing_msg):
-    percentage = (current / total) * 100
-    await processing_msg.edit_text(f"Uploading video: {percentage:.1f}%")
+async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Log errors caused by updates."""
+    logger.error(f"Update {update} caused error {context.error}")
 
-# Run the bot
+def main() -> None:
+    """Run the bot."""
+    application = Application.builder().token(TELEGRAM_TOKEN).build()
+
+    # Add command handlers
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("search", search_command))
+
+    # Add error handler
+    application.add_error_handler(error_handler)
+
+    # Start the bot
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
+
 if __name__ == "__main__":
-    app.run()
+    main()
