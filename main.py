@@ -3,6 +3,11 @@ import os
 from urllib.parse import urlparse, parse_qs
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__name__)
 
 # Replace these with environment variables in production
 API_ID = 12380656  # Your api_id (integer)
@@ -20,32 +25,43 @@ app = Client(
 )
 
 async def fetch_download_url(query: str, is_audio: bool = False) -> dict:
-    headers = {"Authorization": f"Bearer {API_KEY}"}
+    headers = [
+        {"Authorization": f"Bearer {API_KEY}"},
+        {"X-API-Key": API_KEY},
+        {"api_key": API_KEY}
+    ]
     params = {"query": query, "type": "audio" if is_audio else "video"}
     
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.get(f"{API_URL}/download", headers=headers, params=params)
-            response.raise_for_status()
-            return response.json()
-        except httpx.HTTPStatusError as e:
-            print(f"API request failed: {e}")
-            return {}
-        except Exception as e:
-            print(f"Error fetching download URL: {e}")
-            return {}
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        for header in headers:
+            try:
+                logger.info(f"Trying request with header: {list(header.keys())[0]}")
+                response = await client.get(f"{API_URL}/download", headers=header, params=params)
+                response.raise_for_status()
+                logger.info("API request successful")
+                return response.json()
+            except httpx.HTTPStatusError as e:
+                logger.error(f"API request failed with header {list(header.keys())[0]}: {e}")
+                if e.response.status_code == 401:
+                    continue  # Try next header
+                return {"error": f"HTTP error: {e}"}
+            except Exception as e:
+                logger.error(f"Error fetching download URL: {e}")
+                return {"error": f"Request error: {e}"}
+        return {"error": "All authentication methods failed (401 Unauthorized)"}
 
 async def download_file(url: str, filename: str) -> bool:
     async with httpx.AsyncClient() as client:
         try:
-            async with client.stream("GET", url) as response:
+            async with client.stream("GET", url, timeout=60.0) as response:
                 response.raise_for_status()
                 with open(filename, "wb") as f:
                     async for chunk in response.aiter_bytes():
                         f.write(chunk)
+            logger.info(f"Downloaded: {filename}")
             return True
         except Exception as e:
-            print(f"Download failed: {e}")
+            logger.error(f"Download failed: {e}")
             return False
 
 def parse_youtube_url(url: str) -> str:
@@ -66,6 +82,9 @@ async def process_query(query: str, is_audio: bool = False) -> tuple:
         query = parse_youtube_url(query)
     
     data = await fetch_download_url(query, is_audio)
+    if "error" in data:
+        return None, data["error"]
+    
     if not data or "url" not in data:
         return None, "No download URL found."
     
@@ -127,5 +146,5 @@ async def handle_callback(client, callback_query):
     os.remove(filename)
 
 if __name__ == "__main__":
-    print("Starting YouTube Downloader Bot...")
+    logger.info("Starting YouTube Downloader Bot...")
     app.run()
