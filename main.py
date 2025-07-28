@@ -36,7 +36,7 @@ async def fetch_download_url(query: str, is_audio: bool = False) -> dict:
         for header in headers:
             try:
                 logger.info(f"Trying request with header: {list(header.keys())[0]}")
-                response = await client.get(f"{API_URL}/download", headers=header, params=params)
+                response = await client.get(f"{API_URL}", headers=header, params=params)
                 response.raise_for_status()
                 logger.info("API request successful")
                 return response.json()
