@@ -10,14 +10,16 @@ from typing import Optional, Union
 from pyrogram import Client, filters
 from pyrogram.types import Message
 from youtubesearchpython.__future__ import VideosSearch
-from YukkiMusic.logging import LOGGER
-from YukkiMusic.utils.database import is_on_off
-from YukkiMusic.utils.formatters import time_to_seconds
+import logging
 
 # Configuration
 DOWNLOADS_DIR = "downloads"
-API_URL = os.getenv("API_URL", "https://tgmusic.fallenapi.fun")  # Set in environment or config
-API_KEY = os.getenv("API_KEY", "739c4b_uADhloSh7dPJYQzawlxDUZ-l4zVqvY4b")  # Set in environment or config
+API_URL = os.getenv("API_URL", "https://tgmusic.fallenapi.fun")
+API_KEY = os.getenv("API_KEY", "739c4b_uADhloSh7dPJYQzawlxDUZ-l4zVqvY4b")
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 @dataclass
 class DownloadResult:
@@ -44,7 +46,7 @@ class YouTubeAPI:
         try:
             await self._session.aclose()
         except Exception as e:
-            LOGGER(__name__).error(f"Error closing HTTP session: {e}")
+            logger.error(f"Error closing HTTP session: {e}")
 
     async def download_file(self, url: str, file_path: Optional[Path] = None) -> DownloadResult:
         if not url:
@@ -61,12 +63,12 @@ class YouTubeAPI:
                 return DownloadResult(success=True, file_path=file_path)
         except Exception as e:
             error_msg = f"Download failed for {url}: {e}"
-            LOGGER(__name__).error(error_msg)
+            logger.error(error_msg)
             return DownloadResult(success=False, error=error_msg)
 
     async def download_with_api(self, video_id: str, is_video: bool = False) -> Optional[Path]:
         if not API_URL or not API_KEY:
-            LOGGER(__name__).warning("API_URL or API_KEY not set")
+            logger.warning("API_URL or API_KEY not set")
             return None
         url = f"{API_URL}/yt?id={video_id}&video={is_video}"
         headers = {"X-API-Key": API_KEY}
@@ -75,12 +77,12 @@ class YouTubeAPI:
             response.raise_for_status()
             dl_url = response.json().get("results")
             if not dl_url:
-                LOGGER(__name__).error("Empty API response")
+                logger.error("Empty API response")
                 return None
             dl = await self.download_file(dl_url)
             return dl.file_path if dl.success else None
         except Exception as e:
-            LOGGER(__name__).error(f"API download failed for {video_id}: {e}")
+            logger.error(f"API download failed for {video_id}: {e}")
             return None
 
     async def exists(self, link: str, videoid: Optional[str] = None) -> bool:
@@ -97,14 +99,29 @@ class YouTubeAPI:
             results = VideosSearch(link, limit=1)
             result = (await results.next())["result"][0]
             title = result.get("title", "Unknown Title")
-            duration_min = result.get("duration", "None")
+            duration = result.get("duration", "None")
             thumbnail = result.get("thumbnails", [{}])[0].get("url", "").split("?")[0]
             vidid = result.get("id", "")
-            duration_sec = 0 if duration_min == "None" else int(time_to_seconds(duration_min))
-            return title, duration_min, duration_sec, thumbnail, vidid
+            duration_sec = 0 if duration == "None" else self._time_to_seconds(duration)
+            return title, duration, duration_sec, thumbnail, vidid
         except Exception as e:
-            LOGGER(__name__).error(f"Error fetching details for {link}: {e}")
+            logger.error(f"Error fetching details for {link}: {e}")
             return None, None, None, None, None
+
+    def _time_to_seconds(self, duration: str) -> int:
+        """Convert duration string (e.g., '4:30' or '1:23:45') to seconds."""
+        try:
+            parts = duration.split(":")
+            parts = [int(p) for p in parts]
+            if len(parts) == 3:
+                return parts[0] * 3600 + parts[1] * 60 + parts[2]
+            elif len(parts) == 2:
+                return parts[0] * 60 + parts[1]
+            elif len(parts) == 1:
+                return parts[0]
+            return 0
+        except Exception:
+            return 0
 
     async def download(self, link: str, video: bool = False, format_id: Optional[str] = None, title: Optional[str] = None) -> tuple[str, bool]:
         if "&" in link:
@@ -136,36 +153,22 @@ class YouTubeAPI:
                     ydl.download([link])
                     return file_path
             except Exception as e:
-                LOGGER(__name__).error(f"Error downloading {'video' if is_video else 'audio'} for {link}: {e}")
+                logger.error(f"Error downloading {'video' if is_video else 'audio'} for {link}: {e}")
                 return None
 
-        if await is_on_off(1):  # Check if direct download is enabled
-            if dl := await self.download_with_api(link.split("=")[-1], video):
-                return str(dl), True
-            file_path = await loop.run_in_executor(None, lambda: ytdlp_download(video))
-            return file_path or "", direct
-        else:
-            try:
-                proc = await asyncio.create_subprocess_exec(
-                    "yt-dlp",
-                    "-g",
-                    "-f",
-                    format_id or ("best[height<=720]" if video else "bestaudio"),
-                    link,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                stdout, stderr = await proc.communicate()
-                if stdout:
-                    return stdout.decode().split("\n")[0], False
-                LOGGER(__name__).error(f"Subprocess error: {stderr.decode()}")
-                return "", False
-            except Exception as e:
-                LOGGER(__name__).error(f"Subprocess failed for {link}: {e}")
-                return "", False
+        # Assume direct download is always enabled for simplicity
+        if dl := await self.download_with_api(link.split("=")[-1], video):
+            return str(dl), True
+        file_path = await loop.run_in_executor(None, lambda: ytdlp_download(video))
+        return file_path or "", direct
 
 # Pyrogram bot implementation
-app = Client("YukkiMusicBot", api_id=os.getenv("API_ID", "12380656"), api_hash=os.getenv("API_HASH", "d927c13beaaf5110f25c505b7c071273"), bot_token=os.getenv("BOT_TOKEN", "8380016831:AAFpRCUXqKE1EMXtETW03ec6NmUHm4xAgBU"))
+app = Client(
+    "YukkiMusicBot",
+    api_id=os.getenv("API_ID", "12380656"),
+    api_hash=os.getenv("API_HASH", "d927c13beaaf5110f25c505b7c071273"),
+    bot_token=os.getenv("BOT_TOKEN", "8380016831:AAFpRCUXqKE1EMXtETW03ec6NmUHm4xAgBU")
+)
 youtube = YouTubeAPI()
 
 @app.on_message(filters.command(["yt", "youtube"]) & filters.private)
@@ -204,7 +207,7 @@ async def youtube_download(client: Client, message: Message):
         else:
             await message.reply(f"Stream URL: {file_path}")
     except Exception as e:
-        LOGGER(__name__).error(f"Error in download command: {e}")
+        logger.error(f"Error in download command: {e}")
         await message.reply("An error occurred during download.")
 
 @app.on_disconnect()
