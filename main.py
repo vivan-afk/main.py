@@ -1,5 +1,4 @@
 import asyncio, io, os, yt_dlp, httpx
-from YukkiMusic import app
 from pyrogram import filters, enums
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from PIL import Image
