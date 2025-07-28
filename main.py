@@ -50,7 +50,7 @@ def search_song(query: str) -> dict:
     """Search for a song using the music API."""
     try:
         # Assume the API has a /search endpoint with query parameter
-        url = f"{MUSIC_API_URL}/search?q={quote(query)}"
+        url = f"{MUSIC_API_URL}"
         response = requests.get(url, headers=HEADERS, timeout=10)
         response.raise_for_status()
         data = response.json()
