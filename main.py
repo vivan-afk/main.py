@@ -24,7 +24,7 @@ API_ID = int(os.getenv("API_ID", "12380656"))
 API_HASH = os.getenv("API_HASH", "d927c13beaaf5110f25c505b7c071273")
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8380016831:AAFpRCUXqKE1EMXtETW03ec6NmUHm4xAgBU")
 API_URL = os.getenv("API_URL", "https://tgmusic.fallenapi.fun")
-API_KEY = os.getenv("API_KEY", "a054ac_9-knP8fv5euZAT9sfA5uCVYVABKU1kUp")
+API_KEY = os.getenv("API_KEY", "86278b_ssueajhR0D5XCET9n3HGIr0y57w2BZeR")
 
 # Initialize Pyrogram client
 app = Client(
