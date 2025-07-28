@@ -5,17 +5,23 @@ from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import logging
 import asyncio
 from urllib.parse import urlparse, parse_qs
+from dotenv import load_dotenv
+from bs4 import BeautifulSoup
+import yt_dlp
+
+# Load environment variables
+load_dotenv()
 
 # Logging setup
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Configuration
-API_ID = 12380656
-API_HASH = "d927c13beaaf5110f25c505b7c071273"
-BOT_TOKEN = "8380016831:AAFpRCUXqKE1EMXtETW03ec6NmUHm4xAgBU"
-API_URL = "https://tgmusic.fallenapi.fun"  # Verify this is the correct endpoint
-API_KEY = "a054ac_9-knP8fv5euZAT9sfA5uCVYVABKU1kUp"
+API_ID = int(os.getenv("API_ID", "12380656"))
+API_HASH = os.getenv("API_HASH", "d927c13beaaf5110f25c505b7c071273")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8380016831:AAFpRCUXqKE1EMXtETW03ec6NmUHm4xAgBU")
+API_URL = os.getenv("API_URL", "https://tgmusic.fallenapi.fun")
+API_KEY = os.getenv("API_KEY", "a054ac_9-knP8fv5euZAT9sfA5uCVYVABKU1kUp")
 
 # Initialize Pyrogram client
 app = Client("my_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
@@ -32,15 +38,18 @@ async def fetch_download_url(query: str, is_audio: bool, retries: int = 3) -> di
                 response.raise_for_status()
                 content_type = response.headers.get("content-type", "").lower()
                 
-                # Log detailed response info for debugging
                 if "application/json" not in content_type:
-                    logger.error(
-                        f"Unexpected content type: {content_type}\n"
-                        f"URL: {response.url}\n"
-                        f"Headers: {response.headers}\n"
-                        f"Body (truncated): {response.text[:1000]}"
-                    )
-                    return {"error": f"Invalid response format: {content_type}. Expected JSON, received HTML or other content."}
+                    if "text/html" in content_type:
+                        soup = BeautifulSoup(response.text, "html.parser")
+                        error_message = soup.find("h1") or soup.find("title") or response.text[:200]
+                        logger.error(
+                            f"HTML response received:\n"
+                            f"Status: {response.status_code}\n"
+                            f"URL: {response.url}\n"
+                            f"Error: {error_message}"
+                        )
+                        return {"error": f"API returned HTML: {error_message}"}
+                    return {"error": f"Invalid response format: {content_type}"}
                 
                 try:
                     data = response.json()
@@ -63,8 +72,22 @@ async def fetch_download_url(query: str, is_audio: bool, retries: int = 3) -> di
                 logger.error(f"API error: {e}")
                 if attempt == retries - 1:
                     return {"error": f"API request failed: {e}"}
-            await asyncio.sleep(2 ** attempt)  # Exponential backoff
+            await asyncio.sleep(2 ** attempt)
         return {"error": "Max retries exceeded"}
+
+async def fetch_download_url_yt_dlp(query: str, is_audio: bool) -> dict:
+    ydl_opts = {
+        "format": "bestaudio" if is_audio else "best",
+        "quiet": True,
+        "no_warnings": True,
+    }
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(query, download=False)
+            return {"url": info["url"], "title": info.get("title", "file")}
+    except Exception as e:
+        logger.error(f"yt-dlp error: {e}")
+        return {"error": f"Failed to fetch URL with yt-dlp: {e}"}
 
 async def download_file(url: str, filename: str) -> bool:
     async with httpx.AsyncClient(timeout=60.0) as client:
@@ -93,7 +116,10 @@ async def process_query(query: str, is_audio: bool) -> tuple:
     
     data = await fetch_download_url(query, is_audio)
     if "error" in data:
-        return None, data["error"]
+        logger.info("Falling back to yt-dlp due to API failure")
+        data = await fetch_download_url_yt_dlp(query, is_audio)
+        if "error" in data:
+            return None, data["error"]
     
     title = "".join(c for c in data.get("title", "file") if c.isalnum() or c in " _-")[:50]
     ext = "mp3" if is_audio else "mp4"
@@ -111,6 +137,12 @@ async def handle_text(client, message):
     if not query:
         await message.reply_text("Please provide a valid query or YouTube URL.")
         return
+    
+    # Debug with a known YouTube URL
+    test_query = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    logger.info(f"Testing API with query: {test_query}")
+    data = await fetch_download_url(test_query, is_audio=True)
+    logger.info(f"Test API response: {data}")
     
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("Video", callback_data=f"video_{query}")],
