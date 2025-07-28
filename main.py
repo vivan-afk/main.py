@@ -7,6 +7,7 @@ import httpx
 import yt_dlp
 from pathlib import Path
 from typing import Optional, Union
+from dataclasses import dataclass
 from pyrogram import Client, filters
 from pyrogram.types import Message
 from youtubesearchpython.__future__ import VideosSearch
