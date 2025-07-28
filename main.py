@@ -38,8 +38,25 @@ async def fetch_download_url(query: str, is_audio: bool = False) -> dict:
                 logger.info(f"Trying request with header: {list(header.keys())[0]}")
                 response = await client.get(f"{API_URL}", headers=header, params=params)
                 response.raise_for_status()
-                logger.info("API request successful")
-                return response.json()
+                
+                # Log the raw response for debugging
+                response_text = await response.aread()  # Read response as bytes
+                logger.info(f"Raw response: {response_text.decode('utf-8', errors='ignore')}")
+                
+                # Check if response is empty
+                if not response_text:
+                    logger.error("API returned an empty response")
+                    return {"error": "Empty response from API"}
+                
+                # Try parsing JSON
+                try:
+                    data = response.json()
+                    logger.info("API request successful")
+                    return data
+                except ValueError as e:
+                    logger.error(f"Failed to parse JSON response: {e}")
+                    return {"error": f"Invalid JSON response from API: {e}"}
+                    
             except httpx.HTTPStatusError as e:
                 logger.error(f"API request failed with header {list(header.keys())[0]}: {e}")
                 if e.response.status_code == 401:
