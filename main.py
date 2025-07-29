@@ -1,3 +1,4 @@
+
 import re
 import uuid
 from pathlib import Path
@@ -110,36 +111,37 @@ class YouTubeDownloader:
 
 # Initialize Pyrogram client
 app = Client(
-    name="_downloader_bot",
+    name="ownloader_bot",
     api_id="12380656",
     api_hash="d927c13beaaf5110f25c505b7c071273",
     bot_token="8380016831:AAEYHdP6PTS0Gbd7v0I7b0fmu4OpIFZjykY"
 )
 
 @app.on_message(filters.command("song"))
-def download_song(client, message):
+async def download_song(client, message):
     try:
         if len(message.command) < 2:
-            message.reply_text("Usage: /song <song name>")
+            await message.reply_text("Usage: /song <song name>")
             return
 
         song_name = " ".join(message.command[1:])
-        message.reply_text(f"Searching for '{song_name}'...")
+        await message.reply_text(f"Searching for '{song_name}'...")
 
         downloader = YouTubeDownloader()
         video_url = downloader.search_and_get_url(song_name)
         if not video_url:
-            message.reply_text("Could not find the song.")
+            await message.reply_text("Could not find the song.")
             return
 
-        message.reply_text("Downloading the song...")
+        await message.reply_text("Downloading the song...")
         file_path = downloader.download(video_url, song_name)
 
-        message.reply_audio(audio=file_path, caption=f"🎵 {song_name}", title=song_name)
+        await message.reply_audio(audio=file_path, caption=f"🎵 {song_name}", title=song_name)
         os.remove(file_path)
-        message.reply_text("Song sent successfully!")
+        await message.reply_text("Song sent successfully!")
     except Exception as e:
-        message.reply_text(f"Error: {str(e)}")
+        await message.reply_text(f"Error: {str(e)}")
         print(f"Error: {str(e)}")
 
-app.run()
+if __name__ == "__main__":
+    app.run()
