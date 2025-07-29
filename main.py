@@ -4,6 +4,7 @@ import requests
 from pyrogram import Client, filters, enums
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from urllib.parse import urlparse, parse_qs
+from requests.exceptions import RequestException, HTTPError, ConnectionError, Timeout
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -13,7 +14,7 @@ logger = logging.getLogger(__name__)
 API_ID = "12380656"
 API_HASH = "d927c13beaaf5110f25c505b7c071273"
 BOT_TOKEN = "8380016831:AAFpRCUXqKE1EMXtETW03ec6NmUHm4xAgBU"
-API_URL = "https://tgmusic.fallenapi.fun"
+API_BASE_URL = "https://tgmusic.fallenapi.fun"  # Base URL
 API_KEY = "739c4b_uADhloSh7dPJYQzawlxDUZ-l4zVqvY4b"
 
 # Initialize the bot
@@ -43,33 +44,72 @@ def extract_spotify_id(url: str) -> str:
 # Helper function to fetch track metadata
 async def get_track_metadata(track_id: str) -> dict:
     try:
+        # Replace with actual endpoint, e.g., f"{API_BASE_URL}/track/{track_id}"
+        url = f"{API_BASE_URL}/track/{track_id}"  # Update this URL based on API docs
         headers = {"X-API-Key": API_KEY}
-        response = requests.get(f"{API_URL}", headers=headers)
-        response.raise_for_status()
-        return response.json()
-    except requests.RequestException as e:
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()  # Raises an HTTPError for bad status codes
+        if not response.content:
+            logger.error("Empty response from track metadata API")
+            return {"error": "Empty response from API"}
+        try:
+            data = response.json()
+            return data
+        except ValueError as e:
+            logger.error(f"Invalid JSON response: {response.text}")
+            return {"error": f"Invalid JSON response: {str(e)}"}
+    except (HTTPError, ConnectionError, Timeout) as e:
+        logger.error(f"HTTP error fetching track metadata: {e}, Response: {response.text if 'response' in locals() else 'No response'}")
+        return {"error": f"HTTP error: {str(e)}"}
+    except RequestException as e:
         logger.error(f"Error fetching track metadata: {e}")
         return {"error": str(e)}
 
 # Helper function to fetch lyrics
 async def get_lyrics(track_id: str) -> dict:
     try:
+        # Replace with actual endpoint, e.g., f"{API_BASE_URL}/lyrics/{track_id}"
+        url = f"{API_BASE_URL}/lyrics/{track_id}"  # Update this URL based on API docs
         headers = {"X-API-Key": API_KEY}
-        response = requests.get(f"{API_URL}", headers=headers)
+        response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
-        return response.json()
-    except requests.RequestException as e:
+        if not response.content:
+            logger.error("Empty response from lyrics API")
+            return {"error": "Empty response from API"}
+        try:
+            data = response.json()
+            return data
+        except ValueError as e:
+            logger.error(f"Invalid JSON response: {response.text}")
+            return {"error": f"Invalid JSON response: {str(e)}"}
+    except (HTTPError, ConnectionError, Timeout) as e:
+        logger.error(f"HTTP error fetching lyrics: {e}, Response: {response.text if 'response' in locals() else 'No response'}")
+        return {"error": f"HTTP error: {str(e)}"}
+    except RequestException as e:
         logger.error(f"Error fetching lyrics: {e}")
         return {"error": str(e)}
 
 # Helper function to search tracks
 async def search_tracks(query: str, limit: int = 5) -> dict:
     try:
+        # Replace with actual endpoint, e.g., f"{API_BASE_URL}/search?query={query}&limit={limit}"
+        url = f"{API_BASE_URL}/search?query={query}&limit={limit}"  # Update this URL based on API docs
         headers = {"X-API-Key": API_KEY}
-        response = requests.get(f"{API_URL}", headers=headers)
+        response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
-        return response.json()
-    except requests.RequestException as e:
+        if not response.content:
+            logger.error("Empty response from search tracks API")
+            return {"error": "Empty response from API"}
+        try:
+            data = response.json()
+            return data
+        except ValueError as e:
+            logger.error(f"Invalid JSON response: {response.text}")
+            return {"error": f"Invalid JSON response: {str(e)}"}
+    except (HTTPError, ConnectionError, Timeout) as e:
+        logger.error(f"HTTP error searching tracks: {e}, Response: {response.text if 'response' in locals() else 'No response'}")
+        return {"error": f"HTTP error: {str(e)}"}
+    except RequestException as e:
         logger.error(f"Error searching tracks: {e}")
         return {"error": str(e)}
 
