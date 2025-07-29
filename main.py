@@ -11,7 +11,7 @@ app = Client(
 )
 
 # Message handler for text messages (song names)
-@app.on_message(filters.text & ~filters.command)
+@app.on_message(filters.text)
 async def search_videos(client, message):
     try:
         song_name = message.text
