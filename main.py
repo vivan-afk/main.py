@@ -8,7 +8,7 @@ from urllib.parse import unquote
 import aiofiles
 import httpx
 import yt_dlp
-from pyrogram import Client, filters
+from pyrogram import Client, filters, idle
 from pyrogram.types import Message
 from youtubesearchpython.__future__ import VideosSearch
 
