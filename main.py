@@ -6,14 +6,12 @@ from pathlib import Path
 from urllib.parse import unquote
 import os
 import httpx
-import yt_dlp
+from youtubesearchpython import VideosSearch
 from pyrogram import Client, filters
-from youtube_search import YoutubeSearch
 import logging
-import time
-import backoff
 import asyncio
 from datetime import datetime, timedelta
+import backoff
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -156,10 +154,12 @@ class YouTubeDownloader:
         try:
             # Enhance query for music-specific results
             enhanced_query = f"{query} official audio"
-            results = YoutubeSearch(enhanced_query, max_results=5).to_dict()
+            search = VideosSearch(enhanced_query, limit=5)
+            results = search.result().get("result", [])
             if not results:
                 logging.info(f"No results for enhanced query, trying original: {query}")
-                results = YoutubeSearch(query, max_results=5).to_dict()
+                search = VideosSearch(query, limit=5)
+                results = search.result().get("result", [])
             
             if not results:
                 return None, {}
@@ -174,26 +174,35 @@ class YouTubeDownloader:
                         if 1 <= minutes <= 10:
                             metadata = {
                                 "title": result.get("title", "Unknown"),
-                                "artist": result.get("channel", "Unknown"),
+                                "artist": result.get("channel", {}).get("name", "Unknown"),
+                                "album": "Unknown",  # API or search doesn't provide album
                                 "duration": duration,
-                                "thumbnail": result.get("thumbnails", [None])[0]
+                                "thumbnail": result.get("thumbnails", [{}])[0].get("url", None)
                             }
                             return f"{self.base}{result['id']}", metadata
             # Fallback to first result
             metadata = {
                 "title": results[0].get("title", "Unknown"),
-                "artist": results[0].get("channel", "Unknown"),
+                "artist": results[0].get("channel", {}).get("name", "Unknown"),
+                "album": "Unknown",
                 "duration": results[0].get("duration", "Unknown"),
-                "thumbnail": results[0].get("thumbnails", [None])[0]
+                "thumbnail": results[0].get("thumbnails", [{}])[0].get("url", None)
             }
             return f"{self.base}{results[0]['id']}", metadata
         except Exception as e:
             logging.error(f"Search error: {str(e)}")
             return None, {}
 
-    async def download_with_api(self, video_id, query):
-        if not video_id:
-            return DownloadResult(success=False, error="Invalid video ID")
+    async def download(self, link, title, query):
+        video_id = link.split("v=")[-1].split("&")[0] if "v=" in link else link
+
+        # Check cache first
+        cached = self._check_cache(query)
+        if cached:
+            logging.info(f"Using cached file for query: {query}")
+            return cached
+
+        # Download via API
         public_url = await self.http_client.make_request(f"{API_URL}/yt?id={video_id}")
         if not public_url or "results" not in public_url:
             logging.error(f"API response invalid or missing 'results' for video_id {video_id}")
@@ -206,89 +215,11 @@ class YouTubeDownloader:
         logging.info(f"Attempting to download from API: {download_url}")
         result = await self.http_client.download_file(download_url)
         if result.success:
-            result.metadata = await self._get_metadata(video_id, query)  # Fetch metadata if needed
+            # Use search metadata (API may not provide metadata)
+            _, metadata = await self.search_and_get_url(query)
+            result.metadata = metadata
             self._save_to_cache(query, result.file_path, result.metadata)
         return result
-
-    async def _get_metadata(self, video_id, query):
-        """Extract metadata using yt_dlp."""
-        url = f"{self.base}{video_id}"
-        ydl_opts = {"quiet": True, "no_warnings": True}
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-                return {
-                    "title": info.get("title", "Unknown"),
-                    "artist": info.get("uploader", "Unknown"),
-                    "album": info.get("album", "Unknown"),
-                    "duration": str(timedelta(seconds=int(info.get("duration", 0)))),
-                    "thumbnail": info.get("thumbnail", None)
-                }
-        except Exception as e:
-            logging.error(f"Metadata extraction failed: {str(e)}")
-            return {"title": query, "artist": "Unknown", "album": "Unknown", "duration": "Unknown"}
-
-    async def download(self, link, title, query):
-        video_id = link.split("v=")[-1].split("&")[0] if "v=" in link else link
-
-        # Check cache first
-        cached = self._check_cache(query)
-        if cached:
-            logging.info(f"Using cached file for query: {query}")
-            return cached
-
-        # Try API download
-        api_result = await self.download_with_api(video_id, query)
-        if api_result.success:
-            return api_result
-
-        # Fallback to yt_dlp
-        async def song_audio_dl():
-            unique_filename = f"{title or 'song'}_{uuid.uuid4().hex}.%(ext)s"
-            fpath = f"downloads/{unique_filename}"
-            ydl_opts = {
-                "format": "bestaudio/best",
-                "outtmpl": fpath,
-                "quiet": True,
-                "postprocessors": [{
-                    "key": "FFmpegExtractAudio",
-                    "preferredcodec": "mp3",
-                    "preferredquality": "320",  # Set to 320 kbps
-                }],
-                "noplaylist": True,
-                "cookiefile": "cookies.txt",  # Optional: for restricted videos
-            }
-            try:
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    info = ydl.extract_info(link, download=False)
-                    if info.get('is_live'):
-                        raise Exception("Cannot download live streams")
-                    if info.get('duration') and info['duration'] > 600:
-                        raise Exception("Video is too long for a song")
-                    ydl.download([link])
-                file_path = f"downloads/{unique_filename % {'ext': 'mp3'}}"
-                metadata = {
-                    "title": info.get("title", title or "Unknown"),
-                    "artist": info.get("uploader", "Unknown"),
-                    "album": info.get("album", "Unknown"),
-                    "duration": str(timedelta(seconds=int(info.get("duration", 0)))),
-                    "thumbnail": info.get("thumbnail", None)
-                }
-                self._save_to_cache(query, file_path, metadata)
-                return DownloadResult(success=True, file_path=file_path, metadata=metadata)
-            except Exception as e:
-                logging.error(f"yt_dlp download failed: {str(e)}")
-                raise
-
-        for attempt in range(3):
-            try:
-                logging.info(f"Falling back to yt_dlp for {link} (attempt {attempt + 1})")
-                return await song_audio_dl()
-            except Exception as e:
-                if attempt == 2:
-                    logging.error(f"Download error after retries: {str(e)}")
-                    return DownloadResult(success=False, error=str(e))
-                await asyncio.sleep(2 ** attempt)
 
 # Initialize Pyrogram client
 app = Client(
@@ -331,6 +262,16 @@ async def download_song(client, message):
                 f"⏱ **Duration**: {result.metadata.get('duration', 'Unknown')}"
             )
 
+            # Parse duration safely
+            duration_str = result.metadata.get("duration", "0:00")
+            duration_seconds = 0
+            if duration_str != "Unknown" and ":" in duration_str:
+                try:
+                    duration_seconds = int(sum(int(x) * 60 ** i for i, x in enumerate(reversed(duration_str.split(":")))))
+                except ValueError as e:
+                    logging.error(f"Failed to parse duration '{duration_str}': {str(e)}")
+                    duration_seconds = 0
+
             # Send audio with thumbnail if available
             if result.metadata.get("thumbnail"):
                 async with httpx.AsyncClient() as client:
@@ -343,7 +284,7 @@ async def download_song(client, message):
                         caption=caption,
                         title=result.metadata.get("title", song_name),
                         performer=result.metadata.get("artist", "Unknown"),
-                        duration=int(sum(int(x) * 60 ** i for i, x in enumerate(reversed(result.metadata.get("duration", "0:00").split(":"))))),
+                        duration=duration_seconds,
                         thumb=thumb_path
                     )
                     try:
@@ -356,7 +297,7 @@ async def download_song(client, message):
                     caption=caption,
                     title=result.metadata.get("title", song_name),
                     performer=result.metadata.get("artist", "Unknown"),
-                    duration=int(sum(int(x) * 60 ** i for i, x in enumerate(reversed(result.metadata.get("duration", "0:00").split(":")))))
+                    duration=duration_seconds
                 )
 
             await message.reply_text("Song sent successfully!")
