@@ -276,7 +276,7 @@ async def unban_command(client: Client, message: Message):
         await message.reply_text("An error occurred while processing the unban command.")
 
 # Handler for YouTube Music URLs
-@app.on_message(filters.regex("https://music\.youtube\.com/watch\?v=")
+@app.on_message(filters.regex("https://music\.youtube\.com/watch\?v="))
 async def youtube_url_handler(client: Client, message: Message):
     try:
         youtube_url = message.text
