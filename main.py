@@ -6,7 +6,7 @@ from pathlib import Path
 from urllib.parse import unquote
 import os
 import httpx
-from youtubesearchpython import VideosSearch
+import yt_dlp
 from pyrogram import Client, filters
 import logging
 import asyncio
@@ -84,18 +84,20 @@ class AsyncHttpxClient:
 
     @backoff.on_exception(backoff.expo, httpx.HTTPError, max_tries=3)
     async def make_request(self, url):
+        logging.info(f"Making request to: {url}")
         if not url:
             return None
         headers = {"X-API-Key": API_KEY} if url.startswith(API_URL) else {}
         try:
             response = await self.client.get(url, headers=headers, follow_redirects=True)
+            logging.info(f"Response status: {response.status_code}")
             response.raise_for_status()
             return response.json()
         except httpx.HTTPError as e:
-            logging.error(f"Request failed for {url}: {str(e)}")
+            logging.error(f"Request failed for {url}: {str(e)}", exc_info=True)
             return None
         except Exception as e:
-            logging.error(f"Unexpected error in request to {url}: {str(e)}")
+            logging.error(f"Unexpected error in request to {url}: {str(e)}", exc_info=True)
             return None
 
     async def close(self):
@@ -152,45 +154,25 @@ class YouTubeDownloader:
 
     async def search_and_get_url(self, query):
         try:
-            # Enhance query for music-specific results
             enhanced_query = f"{query} official audio"
-            search = VideosSearch(enhanced_query, limit=5)
-            results = search.result().get("result", [])
-            if not results:
-                logging.info(f"No results for enhanced query, trying original: {query}")
-                search = VideosSearch(query, limit=5)
-                results = search.result().get("result", [])
-            
-            if not results:
-                return None, {}
-
-            # Select the best result based on title and duration
-            for result in results:
-                title = result.get('title', '').lower()
-                duration = result.get('duration', '')
-                if "audio" in title or "official" in title or "music" in title:
-                    if duration and ":" in duration:
-                        minutes = sum(int(x) * 60 ** i for i, x in enumerate(reversed(duration.split(":"))))
-                        if 1 <= minutes <= 10:
-                            metadata = {
-                                "title": result.get("title", "Unknown"),
-                                "artist": result.get("channel", {}).get("name", "Unknown"),
-                                "album": "Unknown",  # API or search doesn't provide album
-                                "duration": duration,
-                                "thumbnail": result.get("thumbnails", [{}])[0].get("url", None)
-                            }
-                            return f"{self.base}{result['id']}", metadata
-            # Fallback to first result
-            metadata = {
-                "title": results[0].get("title", "Unknown"),
-                "artist": results[0].get("channel", {}).get("name", "Unknown"),
-                "album": "Unknown",
-                "duration": results[0].get("duration", "Unknown"),
-                "thumbnail": results[0].get("thumbnails", [{}])[0].get("url", None)
-            }
-            return f"{self.base}{results[0]['id']}", metadata
+            logging.info(f"Searching YouTube with query: {enhanced_query}")
+            with yt_dlp.YoutubeDL({"quiet": True}) as ydl:
+                result = ydl.extract_info(f"ytsearch5:{enhanced_query}", download=False)
+                entries = result.get("entries", [])
+                if not entries:
+                    logging.info(f"No results for query: {query}")
+                    return None, {}
+                video = entries[0]
+                metadata = {
+                    "title": video.get("title", "Unknown"),
+                    "artist": video.get("uploader", "Unknown"),
+                    "album": "Unknown",
+                    "duration": str(timedelta(seconds=int(video.get("duration", 0)))),
+                    "thumbnail": video.get("thumbnail", None)
+                }
+                return video["webpage_url"], metadata
         except Exception as e:
-            logging.error(f"Search error: {str(e)}")
+            logging.error(f"Search error: {str(e)}", exc_info=True)
             return None, {}
 
     async def download(self, link, title, query):
@@ -307,7 +289,7 @@ async def download_song(client, message):
             except OSError as e:
                 logging.error(f"Failed to delete file {result.file_path}: {str(e)}")
         except Exception as e:
-            logging.error(f"Error in download_song: {str(e)}")
+            logging.error(f"Error in download_song: {str(e)}", exc_info=True)
             await message.reply_text(f"Error: {str(e)}")
 
 if __name__ == "__main__":
