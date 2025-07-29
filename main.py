@@ -263,7 +263,7 @@ async def unban_command(client: Client, message: Message):
             try:
                 user = await client.get_users(username)
                 await client.unban_chat_member(message.chat.id, user.id)
-                response = f"**Unbanned User**: @{user.username if user.username else user.first_name}\n")
+                response = f"**Unbanned User**: @{user.username if user.username else user.first_name}\n"
                 response += f"**User ID**: `{user.id}`"
                 await message.reply_text(response, parse_mode=enums.ParseMode.MARKDOWN)
             except Exception as e:
