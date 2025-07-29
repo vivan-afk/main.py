@@ -3,6 +3,7 @@ import httpx
 from pyrogram import Client, filters
 from pyrogram.types import Message
 import os
+import json
 
 # configuration
 API_ID = "12380656"
@@ -31,21 +32,56 @@ async def download_song(song_name: str) -> str:
                 params={"query": song_name}
             )
             response.raise_for_status()
-            # Check if response is valid audio content
-            content_type = response.headers.get("content-type", "")
-            if "audio/mpeg" not in content_type:
-                print(f"Invalid content type received: {content_type}")
+            
+            # Parse HTML response to extract download link
+            html_content = response.text
+            # Assuming the HTML contains a JSON-like structure or a direct download link
+            # Based on the API docs, we'll need to extract the actual audio URL
+            try:
+                # If the response contains JSON data within HTML
+                json_start = html_content.find('{')
+                json_end = html_content.rfind('}') + 1
+                if json_start != -1 and json_end != -1:
+                    json_str = html_content[json_start:json_end]
+                    data = json.loads(json_str)
+                    download_url = data.get('download_url')  # Adjust based on actual API response structure
+                else:
+                    # Fallback: look for direct audio link in HTML (modify based on actual HTML structure)
+                    from bs4 import BeautifulSoup
+                    soup = BeautifulSoup(html_content, 'html.parser')
+                    audio_tag = soup.find('a', href=lambda href: href and '.mp3' in href)
+                    download_url = audio_tag['href'] if audio_tag else None
+                
+                if not download_url:
+                    print("No download URL found in response")
+                    return None
+                
+                # Download the actual audio file
+                audio_response = await client.get(download_url)
+                audio_response.raise_for_status()
+                
+                content_type = audio_response.headers.get("content-type", "")
+                if "audio/mpeg" not in content_type:
+                    print(f"Invalid content type received: {content_type}")
+                    return None
+                    
+                output_file = f"downloads/{song_name}.mp3"
+                os.makedirs("downloads", exist_ok=True)
+                with open(output_file, "wb") as f:
+                    f.write(audio_response.content)
+                    
+                # Verify file is not empty
+                if os.path.getsize(output_file) == 0:
+                    print("Downloaded file is empty")
+                    os.remove(output_file)
+                    return None
+                    
+                return output_file
+                
+            except json.JSONDecodeError:
+                print("Failed to parse JSON from HTML response")
                 return None
-            output_file = f"downloads/{song_name}.mp3"
-            os.makedirs("downloads", exist_ok=True)
-            with open(output_file, "wb") as f:
-                f.write(response.content)
-            # Verify file is not empty
-            if os.path.getsize(output_file) == 0:
-                print("Downloaded file is empty")
-                os.remove(output_file)
-                return None
-            return output_file
+                
     except Exception as e:
         print(f"Error downloading song: {e}")
         return None
@@ -81,5 +117,6 @@ async def song_command(client: Client, message: Message):
     except Exception as e:
         await message.reply_text(f"❌ An error occurred: {str(e)}")
 
-print("Bot is running...")
-app.run()
+if __name__ == "__main__":
+    print("Bot is running...")
+    app.run()
