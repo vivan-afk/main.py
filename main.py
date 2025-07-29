@@ -55,7 +55,7 @@ async def get_track_metadata(track_id: str) -> dict:
 async def get_lyrics(track_id: str) -> dict:
     try:
         headers = {"X-API-Key": API_KEY}
-        response = requests.get(f"{API_URL}/get_lyrics/{track_id}", headers=headers)
+        response = requests.get(f"{API_URL}", headers=headers)
         response.raise_for_status()
         return response.json()
     except requests.RequestException as e:
@@ -66,7 +66,7 @@ async def get_lyrics(track_id: str) -> dict:
 async def search_tracks(query: str, limit: int = 5) -> dict:
     try:
         headers = {"X-API-Key": API_KEY}
-        response = requests.get(f"{API_URL}/search_track/{query}?lim={limit}", headers=headers)
+        response = requests.get(f"{API_URL}", headers=headers)
         response.raise_for_status()
         return response.json()
     except requests.RequestException as e:
