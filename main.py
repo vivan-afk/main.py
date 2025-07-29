@@ -54,53 +54,7 @@ class HttpxClient:
             if file_path is None:
                 cd = response.headers.get("Content-Disposition", "")
                 match = re.search(r'filename="?([^"]+)"?', cd)
-                filename = unquote(match[1]) if match else (Path(url).name or uuid.uuid4().hex)
-                path = Path("downloads") / filename
-            else:
-                path = Path(file_path)
-
-            if path.exists() and not overwrite:
-                return DownloadResult(success=True, file_path=path)
-
-            # Save the file
-            path.parent.mkdirlass DownloadResult:
-    def __init__(self, success, file_path=None, error=None):
-        self.success = success
-        self.file_path = file_path
-        self.error = error
-
-class HttpxClient:
-    def __init__(self):
-        self.client = httpx.Client(timeout=30.0)
-
-    def download_file(self, url, file_path=None, overwrite=False):
-        if not url:
-            return DownloadResult(success=False, error="Empty URL provided")
-
-        headers = {"X-API-Key": API_KEY} if url.startswith(API_URL) else {}
-        try:
-            # Make a HEAD request to check Content-Type and Content-Length
-            head_response = self.client.head(url, headers=headers, follow_redirects=True)
-            head_response.raise_for_status()
-
-            content_type = head_response.headers.get("Content-Type", "")
-            content_length = int(head_response.headers.get("Content-Length", 0))
-            if "audio" not in content_type and "octet-stream" not in content_type:
-                logging.warning(f"Unexpected Content-Type: {content_type} for URL: {url}")
-                return DownloadResult(success=False, error=f"Invalid content type: {content_type}")
-            if content_length == 0:
-                logging.error(f"No content body in response from {url}")
-                return DownloadResult(success=False, error="Response has no downloadable content")
-
-            # Proceed with GET request to download the file
-            response = self.client.get(url, headers=headers, follow_redirects=True)
-            response.raise_for_status()
-
-            # Determine file path
-            if file_path is None:
-                cd = response.headers.get("Content-Disposition", "")
-                match = re.search(r'filename="?([^"]+)"?', cd)
-                filename = unquote(match[1]) if match else (Path(url).name or uuid.uuid4().hex)
+                filename = unquote(match.group(1)) if match and match.group(1) else (Path(url).name or f"{uuid.uuid4().hex}.mp3")
                 path = Path("downloads") / filename
             else:
                 path = Path(file_path)
