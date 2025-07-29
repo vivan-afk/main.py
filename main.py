@@ -1,4 +1,3 @@
-
 import re
 import uuid
 from pathlib import Path
@@ -35,7 +34,19 @@ class HttpxClient:
         try:
             response = self.client.get(url, headers=headers, follow_redirects=True)
             response.raise_for_status()
-            
+
+            # Check if the response has a content body
+            if "Content-Length" not in response.headers or int(response.headers.get("Content-Length", 0)) == 0:
+                logging.error(f"No content body in response from {url}")
+                return DownloadResult(success=False, error="Response has no downloadable content")
+
+            # Check Content-Type to ensure it's a file (e.g., audio)
+            content_type = response.headers.get("Content-Type", "")
+            if "audio" not in content_type and "octet-stream" not in content_type:
+                logging.warning(f"Unexpected Content-Type: {content_type} for URL: {url}")
+                return DownloadResult(success=False, error=f"Invalid content type: {content_type}")
+
+            # Determine file path
             if file_path is None:
                 cd = response.headers.get("Content-Disposition", "")
                 match = re.search(r'filename="?([^"]+)"?', cd)
@@ -47,13 +58,17 @@ class HttpxClient:
             if path.exists() and not overwrite:
                 return DownloadResult(success=True, file_path=path)
 
+            # Save the file
             path.parent.mkdir(parents=True, exist_ok=True)
             with open(path, "wb") as f:
-                for chunk in response.iter_content(chunk_size=8192):
+                for chunk in response.iter_bytes(chunk_size=8192):  # Use iter_bytes instead of iter_content
                     f.write(chunk)
             return DownloadResult(success=True, file_path=path)
         except httpx.HTTPError as e:
-            logging.error(f"Download failed: {str(e)}")
+            logging.error(f"Download failed for {url}: {str(e)}")
+            return DownloadResult(success=False, error=str(e))
+        except Exception as e:
+            logging.error(f"Unexpected error during download from {url}: {str(e)}")
             return DownloadResult(success=False, error=str(e))
 
     def make_request(self, url):
@@ -65,7 +80,10 @@ class HttpxClient:
             response.raise_for_status()
             return response.json()
         except httpx.HTTPError as e:
-            logging.error(f"Request failed: {str(e)}")
+            logging.error(f"Request failed for {url}: {str(e)}")
+            return None
+        except Exception as e:
+            logging.error(f"Unexpected error in request to {url}: {str(e)}")
             return None
 
     def close(self):
@@ -92,10 +110,15 @@ class YouTubeDownloader:
         if not video_id:
             return None
         public_url = self.http_client.make_request(f"{API_URL}/yt?id={video_id}")
-        if public_url and "results" in public_url:
-            dl = self.http_client.download_file(public_url["results"])
-            return dl.file_path if dl.success else None
-        return None
+        if not public_url or "results" not in public_url:
+            logging.error(f"API response invalid or missing 'results' for video_id {video_id}")
+            return None
+        download_url = public_url.get("results")
+        if not isinstance(download_url, str):
+            logging.error(f"Invalid download URL in API response: {download_url}")
+            return None
+        dl = self.http_client.download_file(download_url)
+        return dl.file_path if dl.success else None
 
     def download(self, link, title=None):
         video_id = link.split("v=")[-1].split("&")[0] if "v=" in link else link
@@ -169,7 +192,7 @@ async def download_song(client, message):
         logging.error(f"Error in download_song: {str(e)}")
         await message.reply_text(f"Error: {str(e)}")
     finally:
-        downloader.http_client.close()  # Ensure the client is closed after use
+        downloader.http_client.close()
 
 if __name__ == "__main__":
     app.run()
