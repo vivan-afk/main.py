@@ -263,7 +263,7 @@ async def unban_command(client: Client, message: Message):
             try:
                 user = await client.get_users(username)
                 await client.unban_chat_member(message.chat.id, user.id)
-                response = f"**Unbanned User**: @{user.username if user.username else user.first_name}\n"
+                response = f"**Unbanned User**: @{user.username if user.username else user.first_name}\n")
                 response += f"**User ID**: `{user.id}`"
                 await message.reply_text(response, parse_mode=enums.ParseMode.MARKDOWN)
             except Exception as e:
@@ -276,7 +276,7 @@ async def unban_command(client: Client, message: Message):
         await message.reply_text("An error occurred while processing the unban command.")
 
 # Handler for YouTube Music URLs
-@app.on_message(filters.regex(r[](https://music\.youtube\.com/watch\?v=|https://www\.youtube\.com/watch\?v=|https://youtu\.be/)[\w\d]+"))
+@app.on_message(filters.regex("https://music\.youtube\.com/watch\?v=")
 async def youtube_url_handler(client: Client, message: Message):
     try:
         youtube_url = message.text
