@@ -55,9 +55,6 @@ class HttpxClient:
         except httpx.HTTPError as e:
             logging.error(f"Download failed: {str(e)}")
             return DownloadResult(success=False, error=str(e))
-        finally:
-            if not self.client.is_closed:
-                self.client.close()
 
     def make_request(self, url):
         if not url:
@@ -70,14 +67,18 @@ class HttpxClient:
         except httpx.HTTPError as e:
             logging.error(f"Request failed: {str(e)}")
             return None
-        finally:
-            if not self.client.is_closed:
-                self.client.close()
+
+    def close(self):
+        if not self.client.is_closed:
+            self.client.close()
 
 class YouTubeDownloader:
     def __init__(self):
         self.base = "https://www.youtube.com/watch?v="
         self.http_client = HttpxClient()
+
+    def __del__(self):
+        self.http_client.close()
 
     def search_and_get_url(self, query):
         try:
@@ -167,6 +168,8 @@ async def download_song(client, message):
     except Exception as e:
         logging.error(f"Error in download_song: {str(e)}")
         await message.reply_text(f"Error: {str(e)}")
+    finally:
+        downloader.http_client.close()  # Ensure the client is closed after use
 
 if __name__ == "__main__":
     app.run()
