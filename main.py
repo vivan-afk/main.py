@@ -79,7 +79,7 @@ class YouTubeDownloader:
     def download_with_api(self, video_id):
         if not video_id:
             return None
-        public_url = self.http_client.make_request(f"{API_URL}/yt?id={video_id}")
+        public_url = self.http_client.make_request(f"{API_URL}?id={video_id}")
         if public_url and "results" in public_url:
             dl = self.http_client.download_file(public_url["results"])
             return dl.file_path if dl.success else None
