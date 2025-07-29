@@ -46,7 +46,7 @@ def extract_json_from_html(html_content):
                 logger.debug(f"Error processing script tag: {e}")
     return None
 
-async def download_song(song_name: str) -> str:
+async def download_song(song_name: str) -> tuple[str, str]:
     # Try primary API first
     try:
         async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
@@ -55,84 +55,102 @@ async def download_song(song_name: str) -> str:
                 "Content-Type": "application/json"
             }
             logger.info(f"Searching for song via API: {song_name}")
-            response = await client.get(
-                API_URL,
-                headers=headers,
-                params={"query": song_name}
-            )
-            response.raise_for_status()
-            html_content = response.text
-            logger.info(f"Response headers: {response.headers}")
-            logger.info(f"HTML response snippet (first 500 chars): {html_content[:500]}")
+            for attempt in range(3):  # Retry up to 3 times
+                try:
+                    response = await client.get(
+                        API_URL,
+                        headers=headers,
+                        params={"query": song_name}
+                    )
+                    response.raise_for_status()
+                    html_content = response.text
+                    logger.info(f"Response headers: {response.headers}")
+                    logger.info(f"HTML response snippet (first 500 chars): {html_content[:500]}")
 
-            # Save HTML response for debugging
-            debug_file = f"debug/response_{song_name.replace('/', '_')}.html"
-            os.makedirs("debug", exist_ok=True)
-            with open(debug_file, "w", encoding="utf-8") as f:
-                f.write(html_content)
-            logger.info(f"Saved HTML response to: {debug_file}")
+                    # Save HTML response for debugging
+                    debug_file = f"debug/response_{song_name.replace('/', '_')}.html"
+                    os.makedirs("debug", exist_ok=True)
+                    with open(debug_file, "w", encoding="utf-8") as f:
+                        f.write(html_content)
+                    logger.info(f"Saved HTML response to: {debug_file}")
 
-            # Try to extract JSON from HTML
-            download_url = None
-            data = extract_json_from_html(html_content)
-            if data:
-                download_url = data.get('download_url') or data.get('url') or data.get('audio_url')
-                if download_url:
-                    logger.info(f"Found download URL in JSON: {download_url}")
-                else:
-                    logger.warning("No download URL found in JSON data")
-
-            # Fallback to BeautifulSoup for parsing HTML
-            if not download_url:
-                logger.info("Falling back to BeautifulSoup for HTML parsing")
-                soup = BeautifulSoup(html_content, 'html.parser')
-                audio_extensions = ('.mp3', '.m4a', '.wav', '.ogg', '.flac')
-                # Check <a> tags
-                audio_tag = soup.find('a', href=lambda href: href and any(ext in href.lower() for ext in audio_extensions))
-                if audio_tag and audio_tag['href']:
-                    download_url = audio_tag['href']
-                    logger.info(f"Found audio link in HTML: {download_url}")
-                else:
-                    # Check <audio> tags
-                    audio_element = soup.find('audio')
-                    if audio_element and audio_element.get('src'):
-                        download_url = audio_element['src']
-                        logger.info(f"Found audio src in HTML: {download_url}")
+                    # Check if response is JSON
+                    content_type = response.headers.get("content-type", "").lower()
+                    if "application/json" in content_type:
+                        data = response.json()
+                        download_url = data.get('download_url') or data.get('url') or data.get('audio_url')
+                        if download_url:
+                            logger.info(f"Found download URL in JSON: {download_url}")
+                        else:
+                            logger.warning("No download URL found in JSON data")
+                            break
                     else:
-                        logger.warning("No audio link found in HTML response. Falling back to YouTube.")
+                        # Try to extract JSON from HTML
+                        data = extract_json_from_html(html_content)
+                        download_url = None
+                        if data:
+                            download_url = data.get('download_url') or data.get('url') or data.get('audio_url')
+                            if download_url:
+                                logger.info(f"Found download URL in JSON: {download_url}")
+                            else:
+                                logger.warning("No download URL found in JSON data")
 
-            # If download URL found, download from API
-            if download_url:
-                # Ensure the URL is absolute
-                if not download_url.startswith(('http://', 'https://')):
-                    download_url = urljoin(API_URL, download_url)
-                    logger.info(f"Converted to absolute URL: {download_url}")
+                        # Fallback to BeautifulSoup for parsing HTML
+                        if not download_url:
+                            logger.info("Falling back to BeautifulSoup for HTML parsing")
+                            soup = BeautifulSoup(html_content, 'html.parser')
+                            audio_extensions = ('.mp3', '.m4a', '.wav', '.ogg', '.flac')
+                            # Check <a> tags
+                            audio_tag = soup.find('a', href=lambda href: href and any(ext in href.lower() for ext in audio_extensions))
+                            if audio_tag and audio_tag['href']:
+                                download_url = audio_tag['href']
+                                logger.info(f"Found audio link in HTML: {download_url}")
+                            else:
+                                # Check <audio> tags
+                                audio_element = soup.find('audio')
+                                if audio_element and audio_element.get('src'):
+                                    download_url = audio_element['src']
+                                    logger.info(f"Found audio src in HTML: {download_url}")
+                                else:
+                                    logger.warning("No audio link found in HTML response. Falling back to YouTube.")
+                                    break
 
-                logger.info(f"Downloading audio from API: {download_url}")
-                audio_response = await client.get(download_url)
-                audio_response.raise_for_status()
+                    # If download URL found, download from API
+                    if download_url:
+                        # Ensure the URL is absolute
+                        if not download_url.startswith(('http://', 'https://')):
+                            download_url = urljoin(API_URL, download_url)
+                            logger.info(f"Converted to absolute URL: {download_url}")
 
-                content_type = audio_response.headers.get("content-type", "").lower()
-                if not any(audio_type in content_type for audio_type in ("audio/mpeg", "audio/mp4", "audio/wav", "audio/ogg", "audio/flac")):
-                    logger.error(f"Invalid content type received: {content_type}")
-                    return None
+                        logger.info(f"Downloading audio from API: {download_url}")
+                        audio_response = await client.get(download_url)
+                        audio_response.raise_for_status()
 
-                output_file = f"downloads/{song_name.replace('/', '_')}.mp3"
-                os.makedirs("downloads", exist_ok=True)
-                with open(output_file, "wb") as f:
-                    f.write(audio_response.content)
+                        content_type = audio_response.headers.get("content-type", "").lower()
+                        if not any(audio_type in content_type for audio_type in ("audio/mpeg", "audio/mp4", "audio/wav", "audio/ogg", "audio/flac")):
+                            logger.error(f"Invalid content type received: {content_type}")
+                            break
 
-                # Verify file is not empty
-                if os.path.getsize(output_file) == 0:
-                    logger.error("Downloaded file is empty")
-                    os.remove(output_file)
-                    return None
+                        output_file = f"downloads/{song_name.replace('/', '_')}.mp3"
+                        os.makedirs("downloads", exist_ok=True)
+                        with open(output_file, "wb") as f:
+                            f.write(audio_response.content)
 
-                logger.info(f"Successfully downloaded song from API to: {output_file}")
-                return output_file
+                        # Verify file is not empty and meets minimum size
+                        if os.path.getsize(output_file) < 1024:  # Less than 1KB
+                            logger.error("Downloaded file is too small or empty")
+                            os.remove(output_file)
+                            break
 
-    except httpx.HTTPStatusError as e:
-        logger.error(f"HTTP error occurred with API: {e}")
+                        logger.info(f"Successfully downloaded song from API to: {output_file}")
+                        return output_file, song_name  # Return song name as title for API downloads
+                except httpx.HTTPStatusError as e:
+                    logger.error(f"HTTP error in attempt {attempt + 1}: {e}")
+                    if attempt == 2:
+                        logger.warning("Max retries reached for API. Falling back to YouTube.")
+                        break
+                    await asyncio.sleep(1)  # Wait before retrying
+
     except Exception as e:
         logger.error(f"Unexpected error downloading song from API: {e}")
 
@@ -148,30 +166,34 @@ async def download_song(song_name: str) -> str:
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'mp3',
                 'preferredquality': '192',
+            }, {
+                'key': 'FFmpegMetadata',  # Add metadata to MP3
             }],
             'outtmpl': output_file,
             'quiet': True,
             'no_warnings': True,
             'default_search': 'ytsearch',  # Automatically search YouTube
             'noplaylist': True,  # Download only the first video
+            'retries': 3,  # Retry up to 3 times for network issues
         }
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([song_name])
+            info = ydl.extract_info(song_name, download=True)
+            title = info.get('title', song_name)  # Extract video title for caption
 
-        # Verify file exists and is not empty
-        if not os.path.exists(output_file) or os.path.getsize(output_file) == 0:
-            logger.error("YouTube download failed or file is empty")
+        # Verify file exists and meets minimum size
+        if not os.path.exists(output_file) or os.path.getsize(output_file) < 1024:  # Less than 1KB
+            logger.error("YouTube download failed or file is too small")
             if os.path.exists(output_file):
                 os.remove(output_file)
-            return None
+            return None, None
 
         logger.info(f"Successfully downloaded song from YouTube to: {output_file}")
-        return output_file
+        return output_file, title
 
     except Exception as e:
         logger.error(f"Error downloading from YouTube: {e}")
-        return None
+        return None, None
 
 @app.on_message(filters.command("start"))
 async def start_command(client: Client, message: Message):
@@ -192,14 +214,15 @@ async def song_command(client: Client, message: Message):
             await message.reply_text("❌ Song name is too short! Please provide a valid song name.")
             return
         status_msg = await message.reply_text("🔍 Searching for your song...")
-        file_path = await download_song(song_name)
+        file_path, title = await download_song(song_name)
         if not file_path:
             await status_msg.edit_text("❌ Failed to download the song from both API and YouTube. Please try a different song or check the spelling!")
             return
         await status_msg.edit_text("📤 Uploading your song...")
         await message.reply_audio(
             audio=file_path,
-            caption=f"🎵 {song_name}\n\nRequested by: {message.from_user.mention}",
+            caption=f"🎵 {title}\n\nRequested by: {message.from_user.mention}",
+            title=title,
         )
         await status_msg.delete()
         if os.path.exists(file_path):
