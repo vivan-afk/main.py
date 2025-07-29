@@ -15,7 +15,7 @@ API_ID = "12380656"
 API_HASH = "d927c13beaaf5110f25c505b7c071273"
 BOT_TOKEN = "8380016831:AAFpRCUXqKE1EMXtETW03ec6NmUHm4xAgBU"
 API_BASE_URL = "https://tgmusic.fallenapi.fun"  # Base URL
-API_KEY = "739c4b_uADhloSh7dPJYQzawlxDUZ-l4zVqvY4b"
+API_KEY = "739c4b_uADhloSh7dPJYQzawlxDUZ-l4zVqvY4b"  # Ensure this is correct
 
 # Initialize the bot
 app = Client("music_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
@@ -29,32 +29,34 @@ async def is_admin(client: Client, chat_id: int, user_id: int) -> bool:
         logger.error(f"Error checking admin status: {e}")
         return False
 
-# Helper function to extract Spotify track ID from URL
-def extract_spotify_id(url: str) -> str:
+# Helper function to extract YouTube Music track ID from URL
+def extract_youtube_id(url: str) -> str:
     try:
         parsed_url = urlparse(url)
-        path_parts = parsed_url.path.split('/')
-        if 'track' in path_parts:
-            return path_parts[-1].split('?')[0]
+        if parsed_url.hostname in ("music.youtube.com", "www.youtube.com", "youtu.be"):
+            if parsed_url.hostname == "youtu.be":
+                return parsed_url.path.lstrip("/")
+            query = parse_qs(parsed_url.query)
+            return query.get("v", [""])[0]
         return ""
     except Exception as e:
-        logger.error(f"Error extracting Spotify ID: {e}")
+        logger.error(f"Error extracting YouTube Music ID: {e}")
         return ""
 
 # Helper function to fetch track metadata
 async def get_track_metadata(track_id: str) -> dict:
     try:
         # Replace with actual endpoint, e.g., f"{API_BASE_URL}/track/{track_id}"
-        url = f"{API_BASE_URL}/track/{track_id}"  # Update this URL based on API docs
+        url = f"{API_BASE_URL}/track/{track_id}"  # Update based on API docs
         headers = {
-            "X-API-Key": API_KEY.strip(),  # Strip whitespace from API key
-            # Alternative headers if needed (uncomment and adjust based on API docs)
+            "X-API-Key": API_KEY.strip(),
+            # Alternative headers (uncomment if needed)
             # "Authorization": f"Bearer {API_KEY}",
             # "api-key": API_KEY
         }
         logger.info(f"Sending request to {url} with headers: {headers}")
         response = requests.get(url, headers=headers, timeout=10)
-        response.raise_for_status()  # Raises an HTTPError for bad status codes
+        response.raise_for_status()
         if not response.content:
             logger.error("Empty response from track metadata API")
             return {"error": "Empty response from API"}
@@ -82,10 +84,10 @@ async def get_track_metadata(track_id: str) -> dict:
 async def get_lyrics(track_id: str) -> dict:
     try:
         # Replace with actual endpoint, e.g., f"{API_BASE_URL}/lyrics/{track_id}"
-        url = f"{API_BASE_URL}/lyrics/{track_id}"  # Update this URL based on API docs
+        url = f"{API_BASE_URL}/lyrics/{track_id}"  # Update based on API docs
         headers = {
             "X-API-Key": API_KEY.strip(),
-            # Alternative headers if needed
+            # Alternative headers (uncomment if needed)
             # "Authorization": f"Bearer {API_KEY}",
             # "api-key": API_KEY
         }
@@ -119,10 +121,10 @@ async def get_lyrics(track_id: str) -> dict:
 async def search_tracks(query: str, limit: int = 5) -> dict:
     try:
         # Replace with actual endpoint, e.g., f"{API_BASE_URL}/search?query={query}&limit={limit}"
-        url = f"{API_BASE_URL}/search?query={query}&limit={limit}"  # Update this URL based on API docs
+        url = f"{API_BASE_URL}/search?query={query}&limit={limit}"  # Update based on API docs
         headers = {
             "X-API-Key": API_KEY.strip(),
-            # Alternative headers if needed
+            # Alternative headers (uncomment if needed)
             # "Authorization": f"Bearer {API_KEY}",
             # "api-key": API_KEY
         }
@@ -156,8 +158,8 @@ async def search_tracks(query: str, limit: int = 5) -> dict:
 @app.on_message(filters.command("start"))
 async def start_command(client: Client, message: Message):
     response = (
-        "🎵 Welcome to the Spotify Music Downloader Bot! 🎵\n\n"
-        "Send a Spotify track URL or type a song name to get metadata and download options.\n"
+        "🎵 Welcome to the YouTube Music Downloader Bot! 🎵\n\n"
+        "Send a YouTube Music URL or type a song name to get metadata and download options.\n"
         "Available commands:\n"
         "/id - Get chat/user ID\n"
         "/ban - Ban a user (admin only)\n"
@@ -273,15 +275,15 @@ async def unban_command(client: Client, message: Message):
         logger.error(f"Error in unban_command: {e}")
         await message.reply_text("An error occurred while processing the unban command.")
 
-# Handler for Spotify URLs
-@app.on_message(filters.regex(r"https://open\.spotify\.com/track/[\w\d]+"))
-async def spotify_url_handler(client: Client, message: Message):
+# Handler for YouTube Music URLs
+@app.on_message(filters.regex(r[](https://music\.youtube\.com/watch\?v=|https://www\.youtube\.com/watch\?v=|https://youtu\.be/)[\w\d]+"))
+async def youtube_url_handler(client: Client, message: Message):
     try:
-        spotify_url = message.text
-        track_id = extract_spotify_id(spotify_url)
+        youtube_url = message.text
+        track_id = extract_youtube_id(youtube_url)
         
         if not track_id:
-            await message.reply_text("Invalid Spotify URL. Please provide a valid track URL.")
+            await message.reply_text("Invalid YouTube Music URL. Please provide a valid track URL (e.g., https://music.youtube.com/watch?v=...).")
             return
 
         # Fetch track metadata
@@ -323,11 +325,11 @@ async def spotify_url_handler(client: Client, message: Message):
         )
 
     except Exception as e:
-        logger.error(f"Error processing Spotify URL: {e}")
-        await message.reply_text("An error occurred while processing the Spotify URL.")
+        logger.error(f"Error processing YouTube Music URL: {e}")
+        await message.reply_text("An error occurred while processing the YouTube Music URL.")
 
 # Handler for text queries (song names)
-@app.on_message(filters.text & ~filters.command(["start", "id", "ban", "unban"]) & ~filters.regex(r"https://open\.spotify\.com/track/[\w\d]+"))
+@app.on_message(filters.text & ~filters.command(["start", "id", "ban", "unban"]) & ~filters.regex(r[](https://music\.youtube\.com/watch\?v=|https://www\.youtube\.com/watch\?v=|https://youtu\.be/)[\w\d]+"))
 async def song_query_handler(client: Client, message: Message):
     try:
         query = message.text.strip()
