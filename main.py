@@ -49,7 +49,7 @@ class ApiData:
         """Fetch track info from the API for a specific URL."""
         headers = {"Authorization": f"Bearer {MUSIC_API_KEY}"}
         try:
-            response = requests.get(f"{MUSIC_API_URL}/track", params={"url": self.query}, headers=headers)
+            response = requests.get(f"{MUSIC_API_URL}", params={"url": self.query}, headers=headers)
             response.raise_for_status()
             data = response.json()
             tracks = [Track(
@@ -68,7 +68,7 @@ class ApiData:
         headers = {"Authorization": f"Bearer {MUSIC_API_KEY}"}
         try:
             response = requests.get(
-                f"{MUSIC_API_URL}/search",
+                f"{MUSIC_API_URL}",
                 params={"query": self.query, "limit": limit, "type": "track"},
                 headers=headers
             )
@@ -91,7 +91,7 @@ class ApiData:
         """Fetch a single track's details."""
         headers = {"Authorization": f"Bearer {MUSIC_API_KEY}"}
         try:
-            response = requests.get(f"{MUSIC_API_URL}/track", params={"url": self.query}, headers=headers)
+            response = requests.get(f"{MUSIC_API_URL}", params={"url": self.query}, headers=headers)
             response.raise_for_status()
             data = response.json()
             return Track(
@@ -120,7 +120,7 @@ def download_track(track: Track) -> tuple[Optional[str], Optional[str], Optional
     """Download a track and return (audio_path, thumbnail_path, error)."""
     headers = {"Authorization": f"Bearer {MUSIC_API_KEY}"}
     try:
-        response = requests.get(f"{MUSIC_API_URL}/download", params={"url": track.url}, headers=headers)
+        response = requests.get(f"{MUSIC_API_URL}", params={"url": track.url}, headers=headers)
         response.raise_for_status()
         data = response.json()
         audio_url = data.get("audio_url")
