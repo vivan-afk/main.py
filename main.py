@@ -1,19 +1,23 @@
-
-from pyrogram import Client, filters, enums
-from pyrogram.types import Message
+import asyncio
 import logging
+import requests
+from pyrogram import Client, filters, enums
+from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
+from urllib.parse import urlparse, parse_qs
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Bot configuration
-API_ID = "12380656"  # Replace with your API ID
-API_HASH = "d927c13beaaf5110f25c505b7c071273"  # Replace with your API Hash
-BOT_TOKEN = "8380016831:AAFpRCUXqKE1EMXtETW03ec6NmUHm4xAgBU"  # Replace with your Bot Token
+API_ID = "12380656"
+API_HASH = "d927c13beaaf5110f25c505b7c071273"
+BOT_TOKEN = "8380016831:AAFpRCUXqKE1EMXtETW03ec6NmUHm4xAgBU"
+API_URL = "https://tgmusic.fallenapi.fun"
+API_KEY = "739c4b_uADhloSh7dPJYQzawlxDUZ-l4zVqvY4b"
 
 # Initialize the bot
-app = Client("id_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+app = Client("music_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
 # Helper function to check if user is admin
 async def is_admin(client: Client, chat_id: int, user_id: int) -> bool:
@@ -24,6 +28,64 @@ async def is_admin(client: Client, chat_id: int, user_id: int) -> bool:
         logger.error(f"Error checking admin status: {e}")
         return False
 
+# Helper function to extract Spotify track ID from URL
+def extract_spotify_id(url: str) -> str:
+    try:
+        parsed_url = urlparse(url)
+        path_parts = parsed_url.path.split('/')
+        if 'track' in path_parts:
+            return path_parts[-1].split('?')[0]
+        return ""
+    except Exception as e:
+        logger.error(f"Error extracting Spotify ID: {e}")
+        return ""
+
+# Helper function to fetch track metadata
+async def get_track_metadata(track_id: str) -> dict:
+    try:
+        headers = {"X-API-Key": API_KEY}
+        response = requests.get(f"{API_URL}/get_track/{track_id}", headers=headers)
+        response.raise_for_status()
+        return response.json()
+    except requests.RequestException as e:
+        logger.error(f"Error fetching track metadata: {e}")
+        return {"error": str(e)}
+
+# Helper function to fetch lyrics
+async def get_lyrics(track_id: str) -> dict:
+    try:
+        headers = {"X-API-Key": API_KEY}
+        response = requests.get(f"{API_URL}/get_lyrics/{track_id}", headers=headers)
+        response.raise_for_status()
+        return response.json()
+    except requests.RequestException as e:
+        logger.error(f"Error fetching lyrics: {e}")
+        return {"error": str(e)}
+
+# Helper function to search tracks
+async def search_tracks(query: str, limit: int = 5) -> dict:
+    try:
+        headers = {"X-API-Key": API_KEY}
+        response = requests.get(f"{API_URL}/search_track/{query}?lim={limit}", headers=headers)
+        response.raise_for_status()
+        return response.json()
+    except requests.RequestException as e:
+        logger.error(f"Error searching tracks: {e}")
+        return {"error": str(e)}
+
+# Command handler for /start
+@app.on_message(filters.command("start"))
+async def start_command(client: Client, message: Message):
+    response = (
+        "🎵 Welcome to the Spotify Music Downloader Bot! 🎵\n\n"
+        "Send a Spotify track URL or type a song name to get metadata and download options.\n"
+        "Available commands:\n"
+        "/id - Get chat/user ID\n"
+        "/ban - Ban a user (admin only)\n"
+        "/unban - Unban a user (admin only)"
+    )
+    await message.reply_text(response, parse_mode=enums.ParseMode.MARKDOWN)
+
 # Command handler for /id
 @app.on_message(filters.command("id"))
 async def id_command(client: Client, message: Message):
@@ -31,7 +93,6 @@ async def id_command(client: Client, message: Message):
         chat_id = message.chat.id
         response = f"**Chat ID**: `{chat_id}`\n"
 
-        # Check if the command is a reply to another message
         if message.reply_to_message:
             user = message.reply_to_message.from_user
             response += f"**User ID**: `{user.id}`\n"
@@ -41,7 +102,6 @@ async def id_command(client: Client, message: Message):
                 response += f"**Last Name**: {user.last_name}\n"
             response += f"**Is Bot**: {'Yes' if user.is_bot else 'No'}\n"
         
-        # Check if there's a mention in the command (e.g., /id @username)
         elif len(message.command) > 1:
             username = message.command[1].lstrip('@')
             try:
@@ -65,24 +125,18 @@ async def id_command(client: Client, message: Message):
 @app.on_message(filters.command("ban") & filters.group)
 async def ban_command(client: Client, message: Message):
     try:
-        # Check if the user is an admin
         if not await is_admin(client, message.chat.id, message.from_user.id):
             await message.reply_text("You must be an admin to use this command.")
             return
 
-        # Check if it's a reply to a message
         if message.reply_to_message:
             user = message.reply_to_message.from_user
             if user:
-                # Prevent banning admins
                 if await is_admin(client, message.chat.id, user.id):
                     await message.reply_text("Cannot ban an admin!")
                     return
                 
-                # Get ban reason if provided
                 reason = " ".join(message.command[1:]) if len(message.command) > 1 else "No reason provided"
-                
-                # Ban the user
                 await client.ban_chat_member(message.chat.id, user.id)
                 response = f"**Banned User**: @{user.username if user.username else user.first_name}\n"
                 response += f"**User ID**: `{user.id}`\n"
@@ -91,7 +145,6 @@ async def ban_command(client: Client, message: Message):
             else:
                 await message.reply_text("Could not identify the user to ban.")
         
-        # Check if username is provided
         elif len(message.command) > 1:
             username = message.command[1].lstrip('@')
             try:
@@ -120,12 +173,10 @@ async def ban_command(client: Client, message: Message):
 @app.on_message(filters.command("unban") & filters.group)
 async def unban_command(client: Client, message: Message):
     try:
-        # Check if the user is an admin
         if not await is_admin(client, message.chat.id, message.from_user.id):
             await message.reply_text("You must be an admin to use this command.")
             return
 
-        # Check if username is provided
         if len(message.command) > 1:
             username = message.command[1].lstrip('@')
             try:
@@ -142,6 +193,147 @@ async def unban_command(client: Client, message: Message):
     except Exception as e:
         logger.error(f"Error in unban_command: {e}")
         await message.reply_text("An error occurred while processing the unban command.")
+
+# Handler for Spotify URLs
+@app.on_message(filters.regex(r"https://open\.spotify\.com/track/[\w\d]+"))
+async def spotify_url_handler(client: Client, message: Message):
+    try:
+        spotify_url = message.text
+        track_id = extract_spotify_id(spotify_url)
+        
+        if not track_id:
+            await message.reply_text("Invalid Spotify URL. Please provide a valid track URL.")
+            return
+
+        # Fetch track metadata
+        metadata = await get_track_metadata(track_id)
+        if "error" in metadata:
+            await message.reply_text(f"Error fetching metadata: {metadata['error']}")
+            return
+
+        # Fetch lyrics
+        lyrics_data = await get_lyrics(track_id)
+        lyrics = lyrics_data.get("results", "Lyrics not available")
+
+        # Format response
+        duration = metadata.get('duration', 0)
+        minutes = duration // 60
+        seconds = duration % 60
+        response = (
+            f"🎵 **Track Info** 🎵\n\n"
+            f"**Name**: {metadata.get('name', 'Unknown')}\n"
+            f"**Artist**: {', '.join(metadata.get('artists', ['Unknown']))}\n"
+            f"**Album**: {metadata.get('album', 'Unknown')}\n"
+            f"**Year**: {metadata.get('year', 'Unknown')}\n"
+            f"**Duration**: {minutes}:{seconds:02d}\n"
+            f"\n**Lyrics Preview**:\n{lyrics[:200] + '...' if len(lyrics) > 200 else lyrics}\n"
+        )
+
+        # Create inline buttons
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("Download", url=metadata.get('cdnurl', '')),
+                InlineKeyboardButton("Full Lyrics", callback_data=f"lyrics_{track_id}")
+            ]
+        ])
+
+        await message.reply_text(
+            response,
+            parse_mode=enums.ParseMode.MARKDOWN,
+            reply_markup=keyboard
+        )
+
+    except Exception as e:
+        logger.error(f"Error processing Spotify URL: {e}")
+        await message.reply_text("An error occurred while processing the Spotify URL.")
+
+# Handler for text queries (song names)
+@app.on_message(filters.text & ~filters.command(["start", "id", "ban", "unban"]) & ~filters.regex(r"https://open\.spotify\.com/track/[\w\d]+"))
+async def song_query_handler(client: Client, message: Message):
+    try:
+        query = message.text.strip()
+        if not query:
+            await message.reply_text("Please provide a song name to search.")
+            return
+
+        # Search for tracks
+        search_results = await search_tracks(query)
+        if "error" in search_results:
+            await message.reply_text(f"Error searching for tracks: {search_results['error']}")
+            return
+
+        # Get the first result
+        results = search_results.get("results", [])
+        if not results:
+            await message.reply_text(f"No tracks found for '{query}'.")
+            return
+
+        # Use the first track for metadata and lyrics
+        track = results[0]
+        track_id = track.get('id')
+        if not track_id:
+            await message.reply_text("No valid track ID found in search results.")
+            return
+
+        # Fetch detailed metadata
+        metadata = await get_track_metadata(track_id)
+        if "error" in metadata:
+            await message.reply_text(f"Error fetching metadata: {metadata['error']}")
+            return
+
+        # Fetch lyrics
+        lyrics_data = await get_lyrics(track_id)
+        lyrics = lyrics_data.get("results", "Lyrics not available")
+
+        # Format response
+        duration = metadata.get('duration', track.get('duration', 0))
+        minutes = duration // 60
+        seconds = duration % 60
+        response = (
+            f"🎵 **Track Info** 🎵\n\n"
+            f"**Name**: {metadata.get('name', track.get('name', 'Unknown'))}\n"
+            f"**Artist**: {', '.join(metadata.get('artists', [track.get('artist', 'Unknown')]))}\n"
+            f"**Album**: {metadata.get('album', track.get('album', 'Unknown'))}\n"
+            f"**Year**: {metadata.get('year', track.get('year', 'Unknown'))}\n"
+            f"**Duration**: {minutes}:{seconds:02d}\n"
+            f"\n**Lyrics Preview**:\n{lyrics[:200] + '...' if len(lyrics) > 200 else lyrics}\n"
+        )
+
+        # Create inline buttons
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("Download", url=metadata.get('cdnurl', '')),
+                InlineKeyboardButton("Full Lyrics", callback_data=f"lyrics_{track_id}")
+            ]
+        ])
+
+        await message.reply_text(
+            response,
+            parse_mode=enums.ParseMode.MARKDOWN,
+            reply_markup=keyboard
+        )
+
+    except Exception as e:
+        logger.error(f"Error processing song query: {e}")
+        await message.reply_text("An error occurred while processing the song query.")
+
+# Callback handler for inline buttons
+@app.on_callback_query(filters.regex(r"lyrics_.*"))
+async def lyrics_callback(client: Client, callback_query):
+    try:
+        track_id = callback_query.data.split("_")[1]
+        lyrics_data = await get_lyrics(track_id)
+        lyrics = lyrics_data.get("results", "Lyrics not available")
+        
+        await callback_query.message.reply_text(
+            f"🎵 **Full Lyrics** 🎵\n\n{lyrics}",
+            parse_mode=enums.ParseMode.MARKDOWN
+        )
+        await callback_query.answer()
+    except Exception as e:
+        logger.error(f"Error in lyrics callback: {e}")
+        await callback_query.message.reply_text("An error occurred while fetching lyrics.")
+        await callback_query.answer()
 
 # Start the bot
 if __name__ == "__main__":
