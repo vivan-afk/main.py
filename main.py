@@ -116,7 +116,7 @@ app = Client(
     bot_token="8380016831:AAEYHdP6PTS0Gbd7v0I7b0fmu4OpIFZjykY"
 )
 
-@app.on_message(filters.command(["song", "music"]))
+@app.on_message(filters.command("song"))
 def download_song(client, message):
     try:
         if len(message.command) < 2:
