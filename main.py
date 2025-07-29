@@ -1,219 +1,57 @@
-import asyncio
-import os
-import re
-import uuid
-import aiofiles
-import httpx
-import yt_dlp
-from pathlib import Path
-from typing import Optional, Union
-from dataclasses import dataclass
 from pyrogram import Client, filters
 from pyrogram.types import Message
 import logging
 
-# Configuration
-DOWNLOADS_DIR = "downloads"
-API_URL = os.getenv("API_URL", "https://tgmusic.fallenapi.fun")
-API_KEY = os.getenv("API_KEY", "739c4b_uADhloSh7dPJYQzawlxDUZ-l4zVqvY4b")
-
-# Setup logging
+# Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-@dataclass
-class DownloadResult:
-    success: bool
-    file_path: Optional[Path] = None
-    error: Optional[str] = None
+# Bot configuration
+API_ID = "12380656"  # Replace with your API ID
+API_HASH = "d927c13beaaf5110f25c505b7c071273"  # Replace with your API Hash
+BOT_TOKEN = "8380016831:AAFpRCUXqKE1EMXtETW03ec6NmUHm4xAgBU"  # Replace with your Bot Token
 
-class YouTubeAPI:
-    DEFAULT_TIMEOUT = 60
-    CHUNK_SIZE = 8192
-    MAX_RETRIES = 3
-    BACKOFF_FACTOR = 1.0
-    BASE_URL = "https://www.youtube.com/watch?v="
-    REGEX = r"(?:youtube\.com|youtu\.be)"
+# Initialize the bot
+app = Client("id_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-    def __init__(self):
-        self._session = httpx.AsyncClient(
-            timeout=httpx.Timeout(self.DEFAULT_TIMEOUT),
-            follow_redirects=True,
-            max_redirects=5
-        )
-
-    async def close(self) -> None:
-        try:
-            await self._session.aclose()
-        except Exception as e:
-            logger.error(f"Error closing HTTP session: {e}")
-
-    async def download_file(self, url: str, file_path: Optional[Path] = None) -> DownloadResult:
-        if not url:
-            return DownloadResult(success=False, error="Empty URL provided")
-        try:
-            async with self._session.stream("GET", url) as response:
-                response.raise_for_status()
-                if file_path is None:
-                    file_path = Path(DOWNLOADS_DIR) / f"{uuid.uuid4().hex}.mp4"
-                file_path.parent.mkdir(parents=True, exist_ok=True)
-                async with aiofiles.open(file_path, "wb") as f:
-                    async for chunk in response.aiter_bytes(self.CHUNK_SIZE):
-                        await f.write(chunk)
-                return DownloadResult(success=True, file_path=file_path)
-        except Exception as e:
-            error_msg = f"Download failed for {url}: {e}"
-            logger.error(error_msg)
-            return DownloadResult(success=False, error=error_msg)
-
-    async def download_with_api(self, video_id: str, is_video: bool = False) -> Optional[Path]:
-        if not API_URL or not API_KEY:
-            logger.warning("API_URL or API_KEY not set")
-            return None
-        url = f"{API_URL}/yt?id={video_id}&video={is_video}"
-        headers = {"X-API-Key": API_KEY}
-        try:
-            response = await self._session.get(url, headers=headers)
-            response.raise_for_status()
-            dl_url = response.json().get("results")
-            if not dl_url:
-                logger.error("Empty API response")
-                return None
-            dl = await self.download_file(dl_url)
-            return dl.file_path if dl.success else None
-        except Exception as e:
-            logger.error(f"API download failed for {video_id}: {e}")
-            return None
-
-    async def exists(self, link: str, videoid: Optional[str] = None) -> bool:
-        if videoid:
-            link = self.BASE_URL + videoid
-        return bool(re.search(self.REGEX, link))
-
-    async def details(self, link: str, videoid: Optional[str] = None) -> tuple:
-        if videoid:
-            link = self.BASE_URL + videoid
-        if "&" in link:
-            link = link.split("&")[0]
-        try:
-            ydl_opts = {
-                "quiet": True,
-                "no_warnings": True,
-                "geo_bypass": True,
-                "nocheckcertificate": True,
-            }
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(link, download=False)
-                title = info.get("title", "Unknown Title")
-                duration_sec = info.get("duration", 0)
-                duration = self._seconds_to_time(duration_sec) if duration_sec else "None"
-                thumbnail = info.get("thumbnail", "").split("?")[0] if info.get("thumbnail") else None
-                vidid = info.get("id", "")
-                return title, duration, duration_sec, thumbnail, vidid
-        except Exception as e:
-            logger.error(f"Error fetching details for {link}: {e}")
-            return None, None, None, None, None
-
-    def _seconds_to_time(self, seconds: int) -> str:
-        """Convert seconds to a duration string (e.g., '4:30' or '1:23:45')."""
-        if not seconds:
-            return "None"
-        hours = seconds // 3600
-        minutes = (seconds % 3600) // 60
-        secs = seconds % 60
-        if hours:
-            return f"{hours}:{minutes:02d}:{secs:02d}"
-        return f"{minutes}:{secs:02d}"
-
-    async def download(self, link: str, video: bool = False, format_id: Optional[str] = None, title: Optional[str] = None) -> tuple[str, bool]:
-        if "&" in link:
-            link = link.split("&")[0]
-        direct = True
-        loop = asyncio.get_running_loop()
-
-        def ytdlp_download(is_video: bool) -> Optional[str]:
-            ydl_opts = {
-                "format": format_id or ("bestvideo[height<=720]+bestaudio/best" if is_video else "bestaudio/best"),
-                "outtmpl": f"downloads/{title or '%(id)s'}.%(ext)s",
-                "geo_bypass": True,
-                "nocheckcertificate": True,
-                "quiet": True,
-                "no_warnings": True,
-            }
-            if not is_video:
-                ydl_opts["postprocessors"] = [{
-                    "key": "FFmpegExtractAudio",
-                    "preferredcodec": "mp3",
-                    "preferredquality": "192",
-                }]
-            try:
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    info = ydl.extract_info(link, download=False)
-                    file_path = f"downloads/{title or info['id']}.{'mp4' if is_video else 'mp3'}"
-                    if os.path.exists(file_path):
-                        return file_path
-                    ydl.download([link])
-                    return file_path
-            except Exception as e:
-                logger.error(f"Error downloading {'video' if is_video else 'audio'} for {link}: {e}")
-                return None
-
-        if dl := await self.download_with_api(link.split("=")[-1], video):
-            return str(dl), True
-        file_path = await loop.run_in_executor(None, lambda: ytdlp_download(video))
-        return file_path or "", direct
-
-# Pyrogram bot implementation
-app = Client(
-    "YukkiMusicBot",
-    api_id=os.getenv("API_ID", "12380656"),
-    api_hash=os.getenv("API_HASH", "d927c13beaaf5110f25c505b7c071273"),
-    bot_token=os.getenv("BOT_TOKEN", "8380016831:AAFpRCUXqKE1EMXtETW03ec6NmUHm4xAgBU")
-)
-youtube = YouTubeAPI()
-
-@app.on_message(filters.command(["yt", "youtube"]) & filters.private)
-async def youtube_download(client: Client, message: Message):
+# Command handler for /id
+@app.on_message(filters.command("id"))
+async def id_command(client: Client, message: Message):
     try:
-        args = message.text.split(" ", 1)[1] if len(message.text.split()) > 1 else ""
-        if not args:
-            await message.reply("Please provide a YouTube URL or video ID.")
-            return
+        chat_id = message.chat.id
+        response = f"**Chat ID**: `{chat_id}`\n"
 
-        video = "video" in args.lower()
-        link = args.split()[0]
-        if not await youtube.exists(link):
-            await message.reply("Invalid YouTube URL or video ID.")
-            return
-
-        title, duration, _, thumbnail, vidid = await youtube.details(link)
-        if not title:
-            await message.reply("Could not fetch video details.")
-            return
-
-        await message.reply(f"Downloading: *{title}* ({duration})...")
-        file_path, direct = await youtube.download(link, video=video, title=title.replace(" ", "_"))
-
-        if not file_path:
-            await message.reply("Download failed. Please try again.")
-            return
-
-        if direct:
-            await message.reply_document(
-                document=file_path,
-                caption=f"**{title}**\nDuration: {duration}",
-                thumb=thumbnail if thumbnail else None
-            )
-            os.remove(file_path)  # Clean up after sending
-        else:
-            await message.reply(f"Stream URL: {file_path}")
+        # Check if the command is a reply to another message
+        if message.reply_to_message:
+            user = message.reply_to_message.from_user
+            response += f"**User ID**: `{user.id}`\n"
+            response += f"**Username**: @{user.username if user.username else 'None'}\n"
+            response += f"**First Name**: {user.first_name}\n"
+            if user.last_name:
+                response += f"**Last Name**: {user.last_name}\n"
+            response += f"**Is Bot**: {'Yes' if user.is_bot else 'No'}\n"
+        
+        # Check if there's a mention in the command (e.g., /id @username)
+        elif len(message.command) > 1:
+            username = message.command[1].lstrip('@')
+            try:
+                user = await client.get_users(username)
+                response += f"**User ID**: `{user.id}`\n"
+                response += f"**Username**: @{user.username if user.username else 'None'}\n"
+                response += f"**First Name**: {user.first_name}\n"
+                if user.last_name:
+                    response += f"**Last Name**: {user.last_name}\n"
+                response += f"**Is Bot**: {'Yes' if user.is_bot else 'No'}\n"
+            except Exception as e:
+                response += f"Error: Could not find user @{username}"
+        
+        await message.reply_text(response, parse_mode="markdown")
+    
     except Exception as e:
-        logger.error(f"Error in download command: {e}")
-        await message.reply("An error occurred during download.")
+        logger.error(f"Error in id_command: {e}")
+        await message.reply_text("An error occurred while processing the command.")
 
-@app.on_disconnect()
-async def on_disconnect():
-    await youtube.close()
-
+# Start the bot
 if __name__ == "__main__":
+    logger.info("Starting the bot...")
     app.run()
