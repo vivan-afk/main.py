@@ -4,10 +4,14 @@ import uuid
 from pathlib import Path
 from urllib.parse import unquote
 import os
-import requests
+import httpx
 import yt_dlp
 from pyrogram import Client, filters
-from youtubesearchpython import VideosSearch
+from youtube_search import YoutubeSearch
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # API Configuration
 API_URL = "https://tgmusic.fallenapi.fun"
@@ -21,7 +25,7 @@ class DownloadResult:
 
 class HttpxClient:
     def __init__(self):
-        self.session = requests.Session()
+        self.client = httpx.Client(timeout=30.0)
 
     def download_file(self, url, file_path=None, overwrite=False):
         if not url:
@@ -29,7 +33,7 @@ class HttpxClient:
 
         headers = {"X-API-Key": API_KEY} if url.startswith(API_URL) else {}
         try:
-            response = self.session.get(url, headers=headers, stream=True)
+            response = self.client.get(url, headers=headers, follow_redirects=True)
             response.raise_for_status()
             
             if file_path is None:
@@ -45,23 +49,30 @@ class HttpxClient:
 
             path.parent.mkdir(parents=True, exist_ok=True)
             with open(path, "wb") as f:
-                for chunk in response.iter_content(8192):
+                for chunk in response.iter_content(chunk_size=8192):
                     f.write(chunk)
             return DownloadResult(success=True, file_path=path)
-        except Exception as e:
+        except httpx.HTTPError as e:
+            logging.error(f"Download failed: {str(e)}")
             return DownloadResult(success=False, error=str(e))
+        finally:
+            if not self.client.is_closed:
+                self.client.close()
 
     def make_request(self, url):
         if not url:
             return None
         headers = {"X-API-Key": API_KEY} if url.startswith(API_URL) else {}
         try:
-            response = self.session.get(url, headers=headers)
+            response = self.client.get(url, headers=headers, follow_redirects=True)
             response.raise_for_status()
             return response.json()
-        except Exception as e:
-            print(f"Request failed: {str(e)}")
+        except httpx.HTTPError as e:
+            logging.error(f"Request failed: {str(e)}")
             return None
+        finally:
+            if not self.client.is_closed:
+                self.client.close()
 
 class YouTubeDownloader:
     def __init__(self):
@@ -70,16 +81,16 @@ class YouTubeDownloader:
 
     def search_and_get_url(self, query):
         try:
-            results = VideosSearch(query, limit=1).next()["result"]
+            results = YoutubeSearch(query, max_results=1).to_dict()
             return f"{self.base}{results[0]['id']}" if results else None
         except Exception as e:
-            print(f"Search error: {str(e)}")
+            logging.error(f"Search error: {str(e)}")
             return None
 
     def download_with_api(self, video_id):
         if not video_id:
             return None
-        public_url = self.http_client.make_request(f"{API_URL}?id={video_id}")
+        public_url = self.http_client.make_request(f"{API_URL}/yt?id={video_id}")
         if public_url and "results" in public_url:
             dl = self.http_client.download_file(public_url["results"])
             return dl.file_path if dl.success else None
@@ -107,11 +118,15 @@ class YouTubeDownloader:
                 ydl.download([link])
             return f"downloads/{title or 'song'}.mp3"
 
-        return song_audio_dl()
+        try:
+            return song_audio_dl()
+        except Exception as e:
+            logging.error(f"Download error: {str(e)}")
+            return None
 
 # Initialize Pyrogram client
 app = Client(
-    name="ownloader_bot",
+    name="_downloader_bot",
     api_id="12380656",
     api_hash="d927c13beaaf5110f25c505b7c071273",
     bot_token="8380016831:AAEYHdP6PTS0Gbd7v0I7b0fmu4OpIFZjykY"
@@ -125,8 +140,11 @@ async def download_song(client, message):
             return
 
         song_name = " ".join(message.command[1:])
-        await message.reply_text(f"Searching for '{song_name}'...")
+        if not song_name.strip():
+            await message.reply_text("Please provide a valid song name.")
+            return
 
+        await message.reply_text(f"Searching for '{song_name}'...")
         downloader = YouTubeDownloader()
         video_url = downloader.search_and_get_url(song_name)
         if not video_url:
@@ -135,13 +153,20 @@ async def download_song(client, message):
 
         await message.reply_text("Downloading the song...")
         file_path = downloader.download(video_url, song_name)
+        if not file_path or not os.path.exists(file_path):
+            await message.reply_text("Failed to download the song.")
+            return
 
         await message.reply_audio(audio=file_path, caption=f"🎵 {song_name}", title=song_name)
-        os.remove(file_path)
         await message.reply_text("Song sent successfully!")
+        try:
+            os.remove(file_path)
+            logging.info(f"Deleted file: {file_path}")
+        except OSError as e:
+            logging.error(f"Failed to delete file {file_path}: {str(e)}")
     except Exception as e:
+        logging.error(f"Error in download_song: {str(e)}")
         await message.reply_text(f"Error: {str(e)}")
-        print(f"Error: {str(e)}")
 
 if __name__ == "__main__":
     app.run()
