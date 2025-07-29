@@ -46,7 +46,13 @@ async def get_track_metadata(track_id: str) -> dict:
     try:
         # Replace with actual endpoint, e.g., f"{API_BASE_URL}/track/{track_id}"
         url = f"{API_BASE_URL}/track/{track_id}"  # Update this URL based on API docs
-        headers = {"X-API-Key": API_KEY}
+        headers = {
+            "X-API-Key": API_KEY.strip(),  # Strip whitespace from API key
+            # Alternative headers if needed (uncomment and adjust based on API docs)
+            # "Authorization": f"Bearer {API_KEY}",
+            # "api-key": API_KEY
+        }
+        logger.info(f"Sending request to {url} with headers: {headers}")
         response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()  # Raises an HTTPError for bad status codes
         if not response.content:
@@ -54,13 +60,20 @@ async def get_track_metadata(track_id: str) -> dict:
             return {"error": "Empty response from API"}
         try:
             data = response.json()
+            logger.info(f"Received response: {data}")
+            if "error" in data and data["error"] == "Missing API Key":
+                logger.error("API returned 'Missing API Key' error")
+                return {"error": "Invalid or missing API key"}
             return data
         except ValueError as e:
             logger.error(f"Invalid JSON response: {response.text}")
             return {"error": f"Invalid JSON response: {str(e)}"}
-    except (HTTPError, ConnectionError, Timeout) as e:
-        logger.error(f"HTTP error fetching track metadata: {e}, Response: {response.text if 'response' in locals() else 'No response'}")
-        return {"error": f"HTTP error: {str(e)}"}
+    except HTTPError as e:
+        logger.error(f"HTTP error fetching track metadata: {e}, Response: {response.text}")
+        return {"error": f"HTTP error: {str(e)}, Response: {response.text}"}
+    except (ConnectionError, Timeout) as e:
+        logger.error(f"Network error fetching track metadata: {e}")
+        return {"error": f"Network error: {str(e)}"}
     except RequestException as e:
         logger.error(f"Error fetching track metadata: {e}")
         return {"error": str(e)}
@@ -70,7 +83,13 @@ async def get_lyrics(track_id: str) -> dict:
     try:
         # Replace with actual endpoint, e.g., f"{API_BASE_URL}/lyrics/{track_id}"
         url = f"{API_BASE_URL}/lyrics/{track_id}"  # Update this URL based on API docs
-        headers = {"X-API-Key": API_KEY}
+        headers = {
+            "X-API-Key": API_KEY.strip(),
+            # Alternative headers if needed
+            # "Authorization": f"Bearer {API_KEY}",
+            # "api-key": API_KEY
+        }
+        logger.info(f"Sending request to {url} with headers: {headers}")
         response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
         if not response.content:
@@ -78,13 +97,20 @@ async def get_lyrics(track_id: str) -> dict:
             return {"error": "Empty response from API"}
         try:
             data = response.json()
+            logger.info(f"Received response: {data}")
+            if "error" in data and data["error"] == "Missing API Key":
+                logger.error("API returned 'Missing API Key' error")
+                return {"error": "Invalid or missing API key"}
             return data
         except ValueError as e:
             logger.error(f"Invalid JSON response: {response.text}")
             return {"error": f"Invalid JSON response: {str(e)}"}
-    except (HTTPError, ConnectionError, Timeout) as e:
-        logger.error(f"HTTP error fetching lyrics: {e}, Response: {response.text if 'response' in locals() else 'No response'}")
-        return {"error": f"HTTP error: {str(e)}"}
+    except HTTPError as e:
+        logger.error(f"HTTP error fetching lyrics: {e}, Response: {response.text}")
+        return {"error": f"HTTP error: {str(e)}, Response: {response.text}"}
+    except (ConnectionError, Timeout) as e:
+        logger.error(f"Network error fetching lyrics: {e}")
+        return {"error": f"Network error: {str(e)}"}
     except RequestException as e:
         logger.error(f"Error fetching lyrics: {e}")
         return {"error": str(e)}
@@ -94,7 +120,13 @@ async def search_tracks(query: str, limit: int = 5) -> dict:
     try:
         # Replace with actual endpoint, e.g., f"{API_BASE_URL}/search?query={query}&limit={limit}"
         url = f"{API_BASE_URL}/search?query={query}&limit={limit}"  # Update this URL based on API docs
-        headers = {"X-API-Key": API_KEY}
+        headers = {
+            "X-API-Key": API_KEY.strip(),
+            # Alternative headers if needed
+            # "Authorization": f"Bearer {API_KEY}",
+            # "api-key": API_KEY
+        }
+        logger.info(f"Sending request to {url} with headers: {headers}")
         response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
         if not response.content:
@@ -102,13 +134,20 @@ async def search_tracks(query: str, limit: int = 5) -> dict:
             return {"error": "Empty response from API"}
         try:
             data = response.json()
+            logger.info(f"Received response: {data}")
+            if "error" in data and data["error"] == "Missing API Key":
+                logger.error("API returned 'Missing API Key' error")
+                return {"error": "Invalid or missing API key"}
             return data
         except ValueError as e:
             logger.error(f"Invalid JSON response: {response.text}")
             return {"error": f"Invalid JSON response: {str(e)}"}
-    except (HTTPError, ConnectionError, Timeout) as e:
-        logger.error(f"HTTP error searching tracks: {e}, Response: {response.text if 'response' in locals() else 'No response'}")
-        return {"error": f"HTTP error: {str(e)}"}
+    except HTTPError as e:
+        logger.error(f"HTTP error searching tracks: {e}, Response: {response.text}")
+        return {"error": f"HTTP error: {str(e)}, Response: {response.text}"}
+    except (ConnectionError, Timeout) as e:
+        logger.error(f"Network error searching tracks: {e}")
+        return {"error": f"Network error: {str(e)}"}
     except RequestException as e:
         logger.error(f"Error searching tracks: {e}")
         return {"error": str(e)}
