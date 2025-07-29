@@ -9,7 +9,7 @@ API_ID = "12380656"
 API_HASH = "d927c13beaaf5110f25c505b7c071273"
 BOT_TOKEN = "8380016831:AAEYHdP6PTS0Gbd7v0I7b0fmu4OpIFZjykY"
 API_KEY = "86278b_ssueajhR0D5XCET9n3HGIr0y57w2BZeR"
-API_URL = "https://tgmusic.fallenapi.fun/search"
+API_URL = "https://tgmusic.fallenapi.fun"
 
 app = Client(
     "MusicBot",
