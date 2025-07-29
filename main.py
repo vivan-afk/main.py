@@ -44,7 +44,7 @@ def extract_spotify_id(url: str) -> str:
 async def get_track_metadata(track_id: str) -> dict:
     try:
         headers = {"X-API-Key": API_KEY}
-        response = requests.get(f"{API_URL}/get_track/{track_id}", headers=headers)
+        response = requests.get(f"{API_URL}", headers=headers)
         response.raise_for_status()
         return response.json()
     except requests.RequestException as e:
