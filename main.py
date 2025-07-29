@@ -1,4 +1,4 @@
-from pyrogram import Client, filters
+from pyrogram import Client, filters, enums
 from pyrogram.types import Message
 import logging
 
@@ -45,7 +45,7 @@ async def id_command(client: Client, message: Message):
             except Exception as e:
                 response += f"Error: Could not find user @{username}"
         
-        await message.reply_text(response, parse_mode="markdown")
+        await message.reply_text(response, parse_mode=enums.ParseMode.MARKDOWN)
     
     except Exception as e:
         logger.error(f"Error in id_command: {e}")
