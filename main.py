@@ -4,13 +4,12 @@ from pyrogram import Client, filters
 from pyrogram.types import Message
 import os
 
-
 # configuration
 API_ID = "12380656"
 API_HASH = "d927c13beaaf5110f25c505b7c071273"
-BOT_TOKEN = "8380016831:AAEYHdP6PTS0Gbd7v0I7b0fmu4OpIFZjykY"
+BOT_TOKEN = "8380016831:AAEYHdP6PTS0Gbd7v0Iસ
 API_KEY = "86278b_ssueajhR0D5XCET9n3HGIr0y57w2BZeR"
-API_URL = "https://tgmusic.fallenapi.fun"
+API_URL = "https://tgmusic.fallenapi.fun/search"
 
 app = Client(
     "MusicBot",
@@ -27,15 +26,25 @@ async def download_song(song_name: str) -> str:
                 "Content-Type": "application/json"
             }
             response = await client.get(
-                f"{API_URL}",
+                API_URL,
                 headers=headers,
                 params={"query": song_name}
             )
             response.raise_for_status()
+            # Check if response is valid audio content
+            content_type = response.headers.get("content-type", "")
+            if "audio/mpeg" not in content_type:
+                print(f"Invalid content type received: {content_type}")
+                return None
             output_file = f"downloads/{song_name}.mp3"
             os.makedirs("downloads", exist_ok=True)
             with open(output_file, "wb") as f:
                 f.write(response.content)
+            # Verify file is not empty
+            if os.path.getsize(output_file) == 0:
+                print("Downloaded file is empty")
+                os.remove(output_file)
+                return None
             return output_file
     except Exception as e:
         print(f"Error downloading song: {e}")
@@ -67,7 +76,8 @@ async def song_command(client: Client, message: Message):
             caption=f"🎵 {song_name}\n\nRequested by: {message.from_user.mention}",
         )
         await status_msg.delete()
-        os.remove(file_path)
+        if os.path.exists(file_path):
+            os.remove(file_path)
     except Exception as e:
         await message.reply_text(f"❌ An error occurred: {str(e)}")
 
