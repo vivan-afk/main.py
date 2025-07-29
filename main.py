@@ -6,6 +6,7 @@ import os
 import json
 from bs4 import BeautifulSoup
 import logging
+from urllib.parse import urljoin
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -27,7 +28,7 @@ app = Client(
 
 async def download_song(song_name: str) -> str:
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
             headers = {
                 "Authorization": f"Bearer {API_KEY}",
                 "Content-Type": "application/json"
@@ -40,41 +41,60 @@ async def download_song(song_name: str) -> str:
             )
             response.raise_for_status()
             html_content = response.text
-            logger.debug(f"Received HTML response: {html_content[:500]}...")  # Log first 500 chars for debugging
+
+            # Save HTML response for debugging
+            debug_file = f"debug/response_{song_name.replace('/', '_')}.html"
+            os.makedirs("debug", exist_ok=True)
+            with open(debug_file, "w", encoding="utf-8") as f:
+                f.write(html_content)
+            logger.info(f"Saved HTML response to: {debug_file}")
+            logger.debug(f"HTML response (first 500 chars): {html_content[:500]}...")
 
             # Try to extract JSON from HTML
+            download_url = None
             try:
                 json_start = html_content.find('{')
                 json_end = html_content.rfind('}') + 1
                 if json_start != -1 and json_end != -1:
                     json_str = html_content[json_start:json_end]
                     data = json.loads(json_str)
-                    download_url = data.get('download_url')
-                    if not download_url:
-                        logger.error("No 'download_url' found in JSON data")
-                        return None
-                else:
-                    logger.warning("No JSON object found in HTML response")
-                    download_url = None
+                    download_url = data.get('download_url') or data.get('url') or data.get('audio_url')
+                    if download_url:
+                        logger.info(f"Found download URL in JSON: {download_url}")
+                    else:
+                        logger.warning("No download URL found in JSON data")
             except json.JSONDecodeError as e:
                 logger.error(f"Failed to parse JSON from HTML response: {e}")
-                download_url = None
 
             # Fallback to BeautifulSoup for parsing HTML
             if not download_url:
                 logger.info("Falling back to BeautifulSoup for HTML parsing")
                 soup = BeautifulSoup(html_content, 'html.parser')
-                audio_tag = soup.find('a', href=lambda href: href and '.mp3' in href.lower())
+                # Search for links with common audio extensions
+                audio_extensions = ('.mp3', '.m4a', '.wav', '.ogg', '.flac')
+                audio_tag = soup.find('a', href=lambda href: href and any(ext in href.lower() for ext in audio_extensions))
                 if audio_tag and audio_tag['href']:
                     download_url = audio_tag['href']
-                    logger.info(f"Found download URL in HTML: {download_url}")
+                    logger.info(f"Found audio link in HTML: {download_url}")
                 else:
-                    logger.error("No .mp3 link found in HTML response")
-                    return None
+                    # Check for embedded scripts that might contain JSON
+                    scripts = soup.find_all('script')
+                    for script in scripts:
+                        if script.string and 'audio_url' in script.string:
+                            try:
+                                script_json = json.loads(script.string)
+                                download_url = script_json.get('audio_url') or script_json.get('download_url')
+                                if download_url:
+                                    logger.info(f"Found download URL in script JSON: {download_url}")
+                                    break
+                            except json.JSONDecodeError:
+                                continue
+                    if not download_url:
+                        logger.error(f"No audio link found in HTML response. Supported extensions: {audio_extensions}")
+                        return None
 
             # Ensure the URL is absolute
             if not download_url.startswith(('http://', 'https://')):
-                from urllib.parse import urljoin
                 download_url = urljoin(API_URL, download_url)
                 logger.info(f"Converted to absolute URL: {download_url}")
 
@@ -83,8 +103,8 @@ async def download_song(song_name: str) -> str:
             audio_response = await client.get(download_url)
             audio_response.raise_for_status()
 
-            content_type = audio_response.headers.get("content-type", "")
-            if "audio/mpeg" not in content_type.lower():
+            content_type = audio_response.headers.get("content-type", "").lower()
+            if not any(audio_type in content_type for audio_type in ("audio/mpeg", "audio/mp4", "audio/wav", "audio/ogg", "audio/flac")):
                 logger.error(f"Invalid content type received: {content_type}")
                 return None
 
